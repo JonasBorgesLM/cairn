@@ -68,6 +68,51 @@ deliberately or not at all.
 Fixing the check rather than the code is not available. If a check is wrong,
 that is an issue and an ADR amendment, not a `continue-on-error`.
 
+## Graphify in this repository
+
+The general rules are in `~/.claude/CLAUDE.md`. What is specific here:
+
+**The graph is currently a document map, not a call graph.** cairn has five
+`doc.go` files and no domain code, so `graphify update .` produces ~280 nodes
+that are entirely requirements, threats, ADRs and their cross-references —
+`graph_stats` reports `EXTRACTED: 100%` because there is nothing to infer.
+Asking it what calls a function will correctly return nothing, and that is the
+repository's state rather than a failure of the tool. It becomes a call graph
+at M1.
+
+**What it is good for today.** Requirement and threat ids are the connective
+tissue of these documents, and the graph indexes them:
+
+```bash
+graphify query "SR-18"          # every document citing the conditional-write requirement
+graphify query "ADR-0007"       # what depends on the moat/secret decision
+graphify god-nodes              # today: the threat model, at 16 edges
+```
+
+That last one is worth noticing rather than skimming past. The most connected
+node in this repository is `docs/THREAT-MODEL.md` §4, which is the intended
+shape for a library whose reason to exist is the threat model — and it is a
+cheap regression check. If the highest-degree node ever becomes something
+incidental, the documentation has drifted from what the project claims to be
+about.
+
+**What it will be good for at M1 and after.** The boundaries CI enforces are
+graph properties, so the graph answers them in a second where CI takes a
+minute:
+
+```bash
+graphify affected "Destination"   # blast radius before touching the redacting type
+graphify query "net/http"         # NFR-06: nothing outside cairnhttp may reach it
+graphify query "redisstore"       # ADR-0001: the core must not import a submodule
+```
+
+This is a pre-check, not a substitute. `dependency-policy` in CI is the
+authority, because it asks the Go resolver rather than a parsed approximation.
+
+**Rebuild before trusting it.** `graphify update .` takes about a second here.
+A graph built before your edits will answer questions about code you have
+already changed, with no indication that it is doing so.
+
 ## Definition of Done
 
 A change is not finished when it compiles. It is finished when, for every module
