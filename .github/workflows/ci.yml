@@ -476,7 +476,7 @@ jobs:
       pull-requests: read
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@v5
         with:
           # A new dependency in this repository is a design decision, so
           # anything with a known vulnerability at any severity fails rather
