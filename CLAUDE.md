@@ -2,6 +2,12 @@
 
 Guidance for Claude Code when working in this repository.
 
+The general engineering rules — effort proportional to the task, architecture
+discipline, clean code, testing, review, security, git hygiene, verification —
+are in `~/.claude/CLAUDE.md` and are already loaded. **This file carries only
+what is true of cairn**, and where it repeats a global rule it is because this
+repository makes it stricter or has paid for it specifically.
+
 ## What cairn is
 
 A Go library for URL shortening with security as a first-class requirement:
@@ -68,6 +74,51 @@ deliberately or not at all.
 Fixing the check rather than the code is not available. If a check is wrong,
 that is an issue and an ADR amendment, not a `continue-on-error`.
 
+## Graphify in this repository
+
+The general rules are in `~/.claude/CLAUDE.md`. What is specific here:
+
+**The graph is currently a document map, not a call graph.** cairn has five
+`doc.go` files and no domain code, so `graphify update .` produces ~280 nodes
+that are entirely requirements, threats, ADRs and their cross-references —
+`graph_stats` reports `EXTRACTED: 100%` because there is nothing to infer.
+Asking it what calls a function will correctly return nothing, and that is the
+repository's state rather than a failure of the tool. It becomes a call graph
+at M1.
+
+**What it is good for today.** Requirement and threat ids are the connective
+tissue of these documents, and the graph indexes them:
+
+```bash
+graphify query "SR-18"          # every document citing the conditional-write requirement
+graphify query "ADR-0007"       # what depends on the moat/secret decision
+graphify god-nodes              # today: the threat model, at 16 edges
+```
+
+That last one is worth noticing rather than skimming past. The most connected
+node in this repository is `docs/THREAT-MODEL.md` §4, which is the intended
+shape for a library whose reason to exist is the threat model — and it is a
+cheap regression check. If the highest-degree node ever becomes something
+incidental, the documentation has drifted from what the project claims to be
+about.
+
+**What it will be good for at M1 and after.** The boundaries CI enforces are
+graph properties, so the graph answers them in a second where CI takes a
+minute:
+
+```bash
+graphify affected "Destination"   # blast radius before touching the redacting type
+graphify query "net/http"         # NFR-06: nothing outside cairnhttp may reach it
+graphify query "redisstore"       # ADR-0001: the core must not import a submodule
+```
+
+This is a pre-check, not a substitute. `dependency-policy` in CI is the
+authority, because it asks the Go resolver rather than a parsed approximation.
+
+**Rebuild before trusting it.** `graphify update .` takes about a second here.
+A graph built before your edits will answer questions about code you have
+already changed, with no indication that it is doing so.
+
 ## Definition of Done
 
 A change is not finished when it compiles. It is finished when, for every module
@@ -117,30 +168,32 @@ Decided, not open. Each is a defect if violated.
 
 ## Conventions
 
+Git hygiene, Conventional Commits and the review discipline are global. These
+are cairn's own, each tied to a requirement and enforced somewhere:
+
 - **English** for all code, comments, documentation and commit messages
   (NFR-12), regardless of the language a request was written in.
-- **Conventional Commits** (NFR-13). Scope is the package or area:
-  `feat(policy): block IPv4-mapped IPv6`, `fix(redisstore): …`, `docs(adr): …`.
-- **One subject per commit, staged explicitly.** Do not use `git add -A` when the
-  working tree holds work on more than one subject. A commit whose message does
-  not describe everything in it cannot be reviewed or reverted cleanly.
+- **Commit scopes** are this repository's packages: `cairn`, `policy`,
+  `memstore`, `cairnhttp`, `redisstore`, `adr`, `docs`, `deps`, `ci`,
+  `security`. The `commits` CI job rejects anything else.
 - **Every structural decision gets an ADR** (NFR-14). Do not silently resolve a
   question listed as open in `docs/adr/README.md` — write the ADR first.
 - **ADRs are never rewritten.** Amend in place, or supersede with a new one that
-  names the old.
-- **Go 1.24 is the floor** in the core (NFR-02). Do not raise it for convenience;
-  a library's `go` directive is a promise about who may import it.
+  names the old. `adr-immutability` in CI fails when an accepted ADR loses a
+  line.
+- **Go 1.24 is the floor** in the core (NFR-02). Do not raise it for
+  convenience; a library's `go` directive is a promise about who may import it.
 - **Tests are table-driven**, use `t.Run` subtests, and assert the specific
   behaviour — not just "no error".
-- **Public packages carry testable examples** (`ExampleXxx`), matching `moat` and
-  `crier` (NFR-09).
+- **Public packages carry testable examples** (`ExampleXxx`), matching `moat`
+  and `crier` (NFR-09). `check-docs.sh` fails without them.
 - **Integration tests use testcontainers against real Redis** (NFR-10), never
   miniredis. A fake that implements `SetNX` correctly proves nothing about the
   server that has to.
 - **Lua scripts in `.lua` files** via `go:embed` (NFR-11), never Go string
   literals.
 - **Branches**: feature → `develop` via PR; `main` is the release branch
-  (NFR-16).
+  (NFR-16). Both are protected and require the `CI OK` check.
 
 ## Writing security tests
 
@@ -172,3 +225,31 @@ Written down so they are avoided rather than rediscovered:
   overwrites them. Tested with the chain in place, not alone.
 - **Validating after key construction.** Reversing the order in SR-21 produces
   code that looks identical and is not.
+
+## Tooling, and where it helps here
+
+Installed globally; this is what is worth reaching for in *this* repository.
+
+- **`/security-review`, and `claude-security` for a deeper pass.** cairn's
+  reason to exist is its threat model, so a security review here is not a
+  formality — it is the product. Every finding must name the `SR-` it breaks
+  and the `T-` it enables, or it is not a finding, it is a worry.
+- **Superpowers' `systematic-debugging` and `writing-plans`** for M1 onward.
+  Its `test-driven-development` skill fits the `SR-` work particularly well,
+  because a negative control *is* red-green-refactor: watch it fail with the
+  protection removed, then restore it.
+- **`/impeccable` and the animation skills do not apply here.** cairn has no
+  frontend and will not get one — `cairnhttp` renders one plain interstitial
+  page, deliberately unstyled so a host replaces it (ADR-0014). If you find
+  yourself polishing it, the boundary has been crossed.
+- **Playwright does not apply either.** There is no web application. The
+  equivalent for this repository is the threat-probe script of NFR-17, run
+  against the demo stack.
+- **Graphify** is covered in its own section above.
+
+The general rule that effort is proportional to the task applies with one
+exception, stated because this repository is where it bites: **anything
+touching an `SR-` requirement is a complex task regardless of its diff size.**
+A one-line change to code generation, conditional write, code validation
+ordering, or the redaction surface gets the full flow, because the line count
+is not what makes those dangerous.
