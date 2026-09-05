@@ -45,7 +45,7 @@ jobs:
       version: ${{ steps.parse.outputs.version }}
       label: ${{ steps.parse.outputs.label }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: parse
         run: |
           tag='${{ github.ref_name }}'
@@ -84,7 +84,7 @@ jobs:
       # Full tag history: the API-diff step finds this module's previous
       # release by listing its own tags, which a shallow checkout would not
       # have.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -210,7 +210,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
