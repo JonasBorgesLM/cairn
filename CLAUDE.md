@@ -16,10 +16,10 @@ id (`FR-01`, `SR-07`, `NFR-02`, `IR-04`…). Threats live in
 
 ## Current phase
 
-**Pre-implementation.** No production Go code exists yet, and that is
-deliberate — the requirements, threat model, architecture and ADRs are the
-deliverable of this phase. Do not write implementation code without an issue
-that says to.
+**Pre-implementation.** The module skeletons, CI/CD and conventions are in
+place (M0); no domain code exists yet. Work is tracked on the project board,
+grouped M0 through M9. Do not write implementation code without an issue that
+says to.
 
 ## Repository layout
 
@@ -36,8 +36,37 @@ modules.
 A green build in one module says nothing about the other. Run per module:
 
 ```bash
+go work init . ./redisstore     # once; go.work is deliberately not committed
 for m in . redisstore; do (cd "$m" && go build ./... && go vet ./... && go test -race ./...); done
+./.github/scripts/check-docs.sh
 ```
+
+`go.work` is not committed on purpose: a committed workspace would make the
+`satellite-resolution` CI job — the only one that runs with `GOWORK=off`, and
+the only one that can catch a stale `require` — prove nothing.
+
+## What CI checks, and why you cannot talk it out of it
+
+ADR-0017: a convention CI does not check is documentation, not a convention.
+Before writing code, know which jobs will have an opinion:
+
+| Job | Fails when |
+| --- | --- |
+| `dependency-policy` | the core gains a third-party require, imports `net/http` outside `cairnhttp`, or `moat` is not pinned to an exact release |
+| `satellite-resolution` | `redisstore` requires a core version that does not satisfy it — the failure `moat`'s redisstore/v0.2.0 shipped with |
+| `adr-immutability` | an existing ADR loses a line (amend or supersede; never rewrite) |
+| `commits` | a commit or the PR title is not a Conventional Commit |
+| `docs` | a cited `SR-`/`T-` id does not exist, a relative link is broken, or a package exporting an API has no `ExampleXxx` |
+| `lint` | an exported identifier has no doc comment, among much else |
+| `CI OK` | any of the above — this is the single required check |
+
+Two escape hatches exist and both are visible on the PR: label
+`cross-module-window` for a change that must touch a core API and its consumer
+together, `adr-typo` for a genuine typo in an accepted ADR. Reach for them
+deliberately or not at all.
+
+Fixing the check rather than the code is not available. If a check is wrong,
+that is an issue and an ADR amendment, not a `continue-on-error`.
 
 ## Definition of Done
 

@@ -4,8 +4,9 @@ A Go library for URL shortening in which security is a requirement, not an
 addendum. The name is the stack of stones that marks the path for a traveller.
 
 > **Status: pre-implementation.** Requirements, threat model, architecture and
-> sixteen ADRs are written; the code is not. See [Roadmap](#roadmap).
-> Nothing here is importable yet.
+> seventeen ADRs are written, and the pipeline that enforces them is running.
+> The domain code is not written. See [Roadmap](#roadmap) — nothing here is
+> importable yet.
 
 ---
 
@@ -29,6 +30,9 @@ inspected rather than trusted:
 - [`docs/adr/`](docs/adr/README.md) — the decision record
 - [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — the boundary with `moat`,
   `crier` and `task-api`
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — git flow, commit convention, and the
+  documentation rules CI enforces
+- [`RELEASING.md`](RELEASING.md) — why the tag order is not optional
 
 ## Security properties
 
@@ -100,8 +104,8 @@ having no cache that could serve a revoked link.
 
 | Milestone | Delivery |
 | --- | --- |
-| **M0** Foundation | This documentation, module skeletons, CI, linting *(current)* |
-| **M1** Core types | `Code`, `Alphabet`, `Destination`, `Link`, errors, `Hooks` |
+| **M0** Foundation | Documentation, module skeletons, CI/CD, linting, conventions *(done)* |
+| **M1** Core types | `Code`, `Alphabet`, `Destination`, `Link`, errors, `Hooks` *(current)* |
 | **M2** Generation | `CodeGenerator`, CSPRNG generator, density validation |
 | **M3** Policy | `Policy`, `policy/` implementations, the SSRF boundary |
 | **M4** Shortener + memstore | Create / Resolve / Revoke, retry, `memstore` |
