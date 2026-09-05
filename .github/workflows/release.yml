@@ -45,7 +45,7 @@ jobs:
       version: ${{ steps.parse.outputs.version }}
       label: ${{ steps.parse.outputs.label }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: parse
         run: |
           tag='${{ github.ref_name }}'
@@ -84,11 +84,11 @@ jobs:
       # Full tag history: the API-diff step finds this module's previous
       # release by listing its own tags, which a shallow checkout would not
       # have.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: ${{ needs.resolve.outputs.module }}/go.mod
@@ -118,7 +118,7 @@ jobs:
           go vet ./...
           go test -race ./...
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_SUPPORTED_VERSION }}
           cache-dependency-path: ${{ needs.resolve.outputs.module }}/go.mod
@@ -197,7 +197,7 @@ jobs:
             fi
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: apidiff
           path: ${{ runner.temp }}/apidiff.txt
@@ -210,11 +210,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: ${{ runner.temp }}/artifacts
 
