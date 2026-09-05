@@ -1,0 +1,145 @@
+# CLAUDE.md
+
+Guidance for Claude Code when working in this repository.
+
+## What cairn is
+
+A Go library for URL shortening with security as a first-class requirement:
+short-code generation and resolution, destination policy, storage abstraction,
+and link lifecycle. It is **not** an HTTP service, and the core does not import
+`net/http`.
+
+Requirements live in [`REQUIREMENTS.md`](REQUIREMENTS.md) and are referenced by
+id (`FR-01`, `SR-07`, `NFR-02`, `IR-04`…). Threats live in
+[`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) as `T-nn`. Decisions live in
+[`docs/adr/`](docs/adr/README.md).
+
+## Current phase
+
+**Pre-implementation.** No production Go code exists yet, and that is
+deliberate — the requirements, threat model, architecture and ADRs are the
+deliverable of this phase. Do not write implementation code without an issue
+that says to.
+
+## Repository layout
+
+**Multi-module** (ADR-0001). Two published modules.
+
+| Path | Module | Notes |
+| --- | --- | --- |
+| `.` | core | Only `github.com/JonasBorgesLM/moat` in `require` — CI enforces it |
+| `redisstore/` | Redis store | go-redis; testcontainers (test only) |
+
+`policy/`, `memstore/` and `cairnhttp/` are packages of the core module, not
+modules.
+
+A green build in one module says nothing about the other. Run per module:
+
+```bash
+for m in . redisstore; do (cd "$m" && go build ./... && go vet ./... && go test -race ./...); done
+```
+
+## Definition of Done
+
+A change is not finished when it compiles. It is finished when, for every module
+it touches:
+
+1. `go build ./...`, `go vet ./...`, `go test -race ./...` pass.
+2. `golangci-lint run ./...` passes.
+3. Any new `SR-` guard **has been seen to fail** before it was seen to pass.
+   Remove the protection, watch the test go red, put it back. An assertion nobody
+   has watched go red is not verified, it is hoped.
+4. The non-negotiable invariants below still hold.
+
+Fix the underlying issue rather than working around the check. Skipping a
+subtest, silencing a vet warning, or reaching for `--no-verify` do not make a
+task done.
+
+## Non-negotiable invariants
+
+Decided, not open. Each is a defect if violated.
+
+1. **`Save` is conditional, always** (SR-18, ADR-0008). `SetNX`, never `SET`.
+   An unconditional write silently repoints a distributed link at an attacker's
+   destination (T-03) — the worst outcome this library has.
+2. **Validate the code before building the key** (SR-21). Alphabet and length
+   checks come *before* concatenation into the keyspace, not after. The ordering
+   is the requirement.
+3. **Never 301, and always `no-store`** (SR-11, SR-12, ADR-0006). 302 alone is
+   heuristically cacheable under RFC 9111 §4.2.2. Both, or revocation is a lie.
+4. **Fail-closed** (SR-20). Store down means an error on both paths, never a
+   redirect and never a success. There is no option to fail open, and adding one
+   is not a feature request.
+5. **The core imports no third-party package** (NFR-01, ADR-0001). `moat` is the
+   single first-party exception, pinned exactly, never auto-bumped.
+6. **`Destination` has no unredacted formatting path** (SR-15). If you add a
+   method to it, ask what `%v` does first.
+7. **The core does not import `net/http`** (NFR-06). `cairnhttp` does; that is
+   what it is for.
+8. **`Revoke` does not check ownership** (ADR-0010). Authorization is the host's.
+   Do not add a caller identity to it "for safety" — a half-authorization inside
+   a library reads like a guarantee and is not one.
+9. **Retry is bounded** (SR-19). Generated codes only; vanity codes return
+   `ErrCodeExists` to the caller rather than silently issuing a different code.
+10. **Hooks are called synchronously and must not block** (ADR-0016). cairn does
+    not spawn a goroutine per event.
+11. **No global state** (NFR-04). No package-level mutable config, no `init()`
+    that registers anything.
+
+## Conventions
+
+- **English** for all code, comments, documentation and commit messages
+  (NFR-12), regardless of the language a request was written in.
+- **Conventional Commits** (NFR-13). Scope is the package or area:
+  `feat(policy): block IPv4-mapped IPv6`, `fix(redisstore): …`, `docs(adr): …`.
+- **One subject per commit, staged explicitly.** Do not use `git add -A` when the
+  working tree holds work on more than one subject. A commit whose message does
+  not describe everything in it cannot be reviewed or reverted cleanly.
+- **Every structural decision gets an ADR** (NFR-14). Do not silently resolve a
+  question listed as open in `docs/adr/README.md` — write the ADR first.
+- **ADRs are never rewritten.** Amend in place, or supersede with a new one that
+  names the old.
+- **Go 1.24 is the floor** in the core (NFR-02). Do not raise it for convenience;
+  a library's `go` directive is a promise about who may import it.
+- **Tests are table-driven**, use `t.Run` subtests, and assert the specific
+  behaviour — not just "no error".
+- **Public packages carry testable examples** (`ExampleXxx`), matching `moat` and
+  `crier` (NFR-09).
+- **Integration tests use testcontainers against real Redis** (NFR-10), never
+  miniredis. A fake that implements `SetNX` correctly proves nothing about the
+  server that has to.
+- **Lua scripts in `.lua` files** via `go:embed` (NFR-11), never Go string
+  literals.
+- **Branches**: feature → `develop` via PR; `main` is the release branch
+  (NFR-16).
+
+## Writing security tests
+
+Every `SR-` needs a test with a **negative control**. The pattern:
+
+```go
+// SR-18: Save must not overwrite an existing code.
+// Negative control: verified failing against a store whose Save uses SET.
+```
+
+A test that passes against a broken implementation is worse than no test,
+because someone will cite it. If you cannot make a check fail on demand, say so
+in the PR rather than claiming coverage.
+
+## Things that have gone wrong in libraries of this shape
+
+Written down so they are avoided rather than rediscovered:
+
+- **The interstitial that is an open redirect.** `/warn?to=<url>` with a continue
+  button *is* the vulnerability the interstitial was added to prevent. The
+  continuation references the code, never a URL (SR-24, ADR-0014).
+- **The counter that uses the request context.** It is cancelled when the
+  response completes, so every count races the redirect. Use
+  `context.WithoutCancel` (ADR-0012).
+- **Modulo bias in code generation.** `b % 62` over a uniform byte favours the
+  first eight runes. Rejection sampling (ADR-0002).
+- **Header order.** `cairnhttp` must set `Cache-Control` and `Referrer-Policy`
+  immediately before `WriteHeader`, or a surrounding `secureheaders` middleware
+  overwrites them. Tested with the chain in place, not alone.
+- **Validating after key construction.** Reversing the order in SR-21 produces
+  code that looks identical and is not.
