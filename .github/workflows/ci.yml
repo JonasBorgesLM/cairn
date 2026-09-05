@@ -208,17 +208,39 @@ jobs:
       - name: moat must be pinned to an exact version
         run: |
           # ADR-0007: an automated or accidental bump of this dependency is the
-          # event that ADR exists to prevent, so a pseudo-version or a branch
-          # reference here is a failure rather than a curiosity.
-          line=$(grep 'JonasBorgesLM/moat' go.mod || true)
+          # event that ADR exists to prevent, so a pseudo-version here is a
+          # failure rather than a curiosity -- it names a commit, which is an
+          # unreleased state nobody reviewed.
+          #
+          # The module graph, not a grep of go.mod. Grepping matched the
+          # comment in go.mod that names moat and read its trailing comma as a
+          # version, which is how this job first went red.
+          #
+          # A failed `go list -m all` is an error, not an absence. Treating it
+          # as "moat is not required" would make an unresolvable graph pass
+          # this check silently -- the fail-open ADR-0017 exists to prevent.
+          graph=$(go list -m -f '{{.Path}} {{.Version}}' all 2>&1) || {
+            echo "::error::cannot resolve the core module graph"
+            printf '%s\n' "$graph"
+            exit 1
+          }
+
+          line=$(printf '%s\n' "$graph" | grep '^github.com/JonasBorgesLM/moat ' || true)
           if [ -z "$line" ]; then
-            echo "moat is not required yet (arrives with destination.go)"
+            echo "moat is not in the module graph yet (arrives with destination.go)"
             exit 0
           fi
-          version=$(printf '%s\n' "$line" | awk '{print $2}')
+
+          version=${line#* }
           case "$version" in
-            v[0-9]*.[0-9]*.[0-9]*) echo "moat pinned at $version" ;;
-            *) echo "::error file=go.mod::moat must be pinned to an exact release, found '$version' (ADR-0007)"; exit 1 ;;
+            *-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-*)
+              echo "::error file=go.mod::moat is at a pseudo-version ($version); it must name a release (ADR-0007)"
+              exit 1 ;;
+            v[0-9]*.[0-9]*.[0-9]*)
+              echo "moat pinned at $version" ;;
+            *)
+              echo "::error file=go.mod::moat must be pinned to an exact release, found '$version' (ADR-0007)"
+              exit 1 ;;
           esac
 
   # --------------------------------------------------------------- lint ----
