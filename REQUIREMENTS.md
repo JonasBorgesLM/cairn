@@ -293,7 +293,7 @@ These are the reason for the library. Each maps to a threat in
 - **NFR-16 Branching.** Feature branches merge to `develop` via PR; `main` is the
   release branch.
 - **NFR-17 The threat model is exercised by something re-runnable**, and the
-  result is recorded — following `crier`'s IR-06. A threat model nobody has
+  result is recorded — following `crier`'s `crier/IR-06`. A threat model nobody has
   attacked is a wish list.
 
 ---

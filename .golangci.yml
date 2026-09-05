@@ -1,0 +1,78 @@
+# Strict by intent (NFR-15). cairn's failure modes are security failures: an
+# unchecked error on the save path silently repoints a link (T-03), and a
+# missing doc comment on an exported identifier is how a caller comes to
+# believe Revoke checks ownership (ADR-0010).
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - contextcheck
+    - copyloopvar
+    - dupl
+    - errorlint
+    - exhaustive
+    - gocritic
+    - godot
+    - goconst
+    - gosec
+    - misspell
+    - nilerr
+    - noctx
+    - nolintlint
+    - prealloc
+    - predeclared
+    - revive
+    - unconvert
+    - unparam
+    - wastedassign
+    - whitespace
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    exhaustive:
+      # Decision has three values and every switch over it must handle all
+      # three. A missing case defaulting to Allow is the bug this catches.
+      default-signifies-exhaustive: true
+    goconst:
+      ignore-tests: true
+    gocritic:
+      enabled-tags: [diagnostic, performance, style]
+      disabled-checks: [hugeParam, rangeValCopy]
+    govet:
+      enable-all: true
+      disable: [fieldalignment]
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+    revive:
+      rules:
+        # This is the documentation half of "keep the docs updated", applied
+        # where it actually decays: an exported identifier without a doc
+        # comment ships an API whose contract exists only in the author's head.
+        # Several of cairn's contracts live nowhere else -- that Save must not
+        # overwrite, that Revoke does not authorize, that a CodeGenerator must
+        # draw from a CSPRNG.
+        - name: exported
+          arguments: [checkPrivateReceivers]
+        - name: package-comments
+
+  exclusions:
+    rules:
+      # Table-driven tests are repetitive by nature, and a test that ignores a
+      # cleanup error is not the risk this config exists to catch.
+      - path: _test\.go$
+        linters: [dupl, errcheck, gosec, goconst, unparam]
+
+formatters:
+  enable: [gofmt, goimports]
+  settings:
+    goimports:
+      local-prefixes: [github.com/JonasBorgesLM/cairn]

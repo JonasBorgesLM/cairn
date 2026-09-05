@@ -342,7 +342,7 @@ to reach for a method-preserving redirect status in T-07.
 ## 6. Verification
 
 Per NFR-17, this model is not finished as prose. Each `T-` becomes a probe in
-`docs/security/probe-threats.sh`, following `crier`'s IR-06, run against the
+`docs/security/probe-threats.sh`, following `crier`'s `crier/IR-06`, run against the
 IR-05 demo stack. Each `SR-` gets a unit test **validated by a negative
 control** — the test is watched failing with the protection removed before it is
 trusted passing with it in place. A check nobody has seen go red is not a check.

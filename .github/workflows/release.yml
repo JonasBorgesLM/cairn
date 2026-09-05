@@ -1,0 +1,272 @@
+# Release (CD).
+#
+# Both modules are libraries: cairn ships source, not binaries, so there is no
+# build matrix here and no artifact but the tag itself. What this workflow does
+# instead is refuse to publish a release that cannot be consumed.
+#
+# The order of tags is not optional and is not enforced here -- see
+# RELEASING.md. Tagging redisstore before the core version it requires is
+# published produces a release nobody can `go get`.
+name: Release
+
+on:
+  push:
+    tags:
+      # `*` does not match `/`, so `v*` is the core alone and the satellite
+      # needs its own line. A tag pattern is a list someone forgets to extend,
+      # and the module it forgets is one that cannot be released at all,
+      # silently -- so ci.yml's dependency-policy job is not the only guard:
+      # the `module-coverage` step below fails when a module in the tree
+      # matches nothing here.
+      - "v*"
+      - "redisstore/v*"
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.24"
+  GO_SUPPORTED_VERSION: "stable"
+  GOVULNCHECK_VERSION: "v1.7.0"
+  # golang.org/x/exp carries no tagged releases -- this is the exact
+  # pseudo-version, not a placeholder. gorelease's own package documentation
+  # calls it experimental with no compatibility promise, which is precisely why
+  # a silent bump is worth pinning against. Bump on a stated trigger: an output
+  # change that breaks the API-diff parsing below, or a bug this repository
+  # actually hits. Never on a schedule.
+  GORELEASE_VERSION: "v0.0.0-20260824195058-e88cd73687aa"
+
+jobs:
+  resolve:
+    name: Resolve module from tag
+    runs-on: ubuntu-latest
+    outputs:
+      module: ${{ steps.parse.outputs.module }}
+      version: ${{ steps.parse.outputs.version }}
+      label: ${{ steps.parse.outputs.label }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: parse
+        run: |
+          tag='${{ github.ref_name }}'
+          case "$tag" in
+            v*)  module="."          ; version="$tag" ; label="cairn" ;;
+            */v*) module="${tag%/v*}" ; version="v${tag##*/v}" ; label="$module" ;;
+            *)   echo "::error::tag '$tag' matches no module"; exit 1 ;;
+          esac
+          echo "module=$module"   >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "label=$label"     >> "$GITHUB_OUTPUT"
+          echo "releasing $label $version from $module"
+
+      - name: Every module in the tree can be released
+        run: |
+          # The tag patterns above accept no expressions, so they cannot be
+          # derived from the modules that exist. This checks the correspondence
+          # instead: a module nobody can tag is a module that silently never
+          # ships.
+          for f in $(find . -name go.mod -not -path './.git/*'); do
+            dir=$(dirname "${f#./}")
+            case "$dir" in
+              .|redisstore) ;;
+              *) echo "::error::module at '$dir' matches no tag pattern in this workflow"; exit 1 ;;
+            esac
+          done
+          echo "every module has a tag pattern"
+
+  verify:
+    name: Verify ${{ needs.resolve.outputs.label }}
+    needs: resolve
+    runs-on: ubuntu-latest
+    outputs:
+      toolchain: ${{ steps.toolchain.outputs.version }}
+    steps:
+      # Full tag history: the API-diff step finds this module's previous
+      # release by listing its own tags, which a shallow checkout would not
+      # have.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: ${{ needs.resolve.outputs.module }}/go.mod
+
+      - id: toolchain
+        run: |
+          echo "verified with $(go version)"
+          echo "version=$(go version | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+
+      # A tag is immutable once anyone has fetched it. Everything that can fail
+      # is checked before the release exists, never after.
+      #
+      # No workspace anywhere in this job: a release must resolve the way a
+      # consumer resolves it. This is the same reasoning as ci.yml's
+      # satellite-resolution job, and here it is not optional -- publishing a
+      # module verified only inside a workspace is how a satellite ships
+      # requiring a core version that does not satisfy it.
+      - name: Build, vet, test as a consumer resolves it
+        working-directory: ${{ needs.resolve.outputs.module }}
+        env:
+          GOWORK: "off"
+        run: |
+          gowork="$(go env GOWORK)"
+          [ "$gowork" = "off" ] || { echo "::error::workspace in effect ($gowork)"; exit 1; }
+          go mod verify
+          go build ./...
+          go vet ./...
+          go test -race ./...
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_SUPPORTED_VERSION }}
+          cache-dependency-path: ${{ needs.resolve.outputs.module }}/go.mod
+
+      - name: govulncheck
+        working-directory: ${{ needs.resolve.outputs.module }}
+        env:
+          GOWORK: "off"
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
+          govulncheck ./...
+
+      # The core's dependency policy is a release-blocking property, not just a
+      # pull-request one: a published version carrying a third-party dependency
+      # cannot be taken back.
+      - name: Core dependency policy still holds
+        if: needs.resolve.outputs.module == '.'
+        env:
+          GOWORK: "off"
+        run: |
+          offenders=$(go list -m -f '{{if not .Main}}{{.Path}}{{end}}' all 2>/dev/null \
+            | grep -v '^github.com/JonasBorgesLM/' || true)
+          if [ -n "$offenders" ]; then
+            echo "::error::releasing a core with third-party dependencies (ADR-0001)"
+            printf '%s\n' "$offenders"
+            exit 1
+          fi
+
+      - name: Documentation is current
+        run: ./.github/scripts/check-docs.sh
+
+      # NFR-13: the changelog is generated from the real API diff, not written
+      # from memory. A hand-written changelog documents what the author meant to
+      # change; this documents what actually changed.
+      #
+      # -base is passed explicitly rather than left to gorelease to infer. Left
+      # to itself it asks the proxy for this module's latest published version
+      # -- and once the proxy has indexed the tag that triggered this run, that
+      # answer is the release being published, so it diffs against itself and
+      # suggests a patch bump inside its own notes. Reading the previous version
+      # from local tag history removes the race instead of hoping to win it.
+      - name: Generate API diff
+        working-directory: ${{ needs.resolve.outputs.module }}
+        run: |
+          module='${{ needs.resolve.outputs.module }}'
+          tag='${{ github.ref_name }}'
+          if [ "$module" = "." ]; then prefix=""; else prefix="$module/"; fi
+
+          sorted=$(git tag --list "${prefix}v*" --sort=-v:refname)
+          newest=$(printf '%s\n' "$sorted" | head -1)
+          if [ "$newest" != "$tag" ]; then
+            echo "::error::expected $tag to be the newest tag, found '${newest:-<none>}' -- checkout is missing tag history"
+            exit 1
+          fi
+
+          second=$(printf '%s\n' "$sorted" | sed -n '2p')
+          if [ -n "$second" ]; then base="${second#"$prefix"}"; else base="none"; fi
+
+          go install golang.org/x/exp/cmd/gorelease@${{ env.GORELEASE_VERSION }}
+          set +e
+          gorelease -base="$base" > "$RUNNER_TEMP/apidiff.txt" 2>&1
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/apidiff.txt"
+          if [ "$status" -ne 0 ]; then
+            # gorelease's existing-versions sanity check queries the live proxy
+            # and can already see the tag that triggered this run. That refusal
+            # has one specific, matched reason and only ever follows a real diff
+            # already printed above. Anything else -- a resolution failure, a
+            # genuine incompatible change -- still fails the release.
+            if grep -q "^Can only suggest a release version when compared against the most recent version of this major:" "$RUNNER_TEMP/apidiff.txt"; then
+              echo "::warning::gorelease could not suggest a version, per the reason above -- proceeding with the diff it produced"
+            else
+              echo "::error::gorelease exited $status comparing against $base"
+              exit "$status"
+            fi
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apidiff
+          path: ${{ runner.temp }}/apidiff.txt
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [resolve, verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/artifacts
+
+      # A release nobody can attribute is worth less than no release. This used
+      # to be a warning in crier, which gated nothing -- every release published
+      # regardless, and the message merged "not signed" with "CI cannot check"
+      # into one line. .github/allowed_signers publishes the key CI checks
+      # against, so a failure here means something specific, and verify-tag's
+      # own stderr says which of the two it is.
+      - name: Verify the tag is signed
+        run: |
+          if ! [ -s .github/allowed_signers ] || ! grep -qv '^#' .github/allowed_signers; then
+            echo "::error::.github/allowed_signers is empty -- no release can be verified"
+            echo "See RELEASING.md, 'Before the first tag'."
+            exit 1
+          fi
+          git config gpg.ssh.allowedSignersFile "$GITHUB_WORKSPACE/.github/allowed_signers"
+          git verify-tag '${{ github.ref_name }}'
+
+      - name: Assemble release notes
+        run: |
+          diff_file=$(find "$RUNNER_TEMP/artifacts" -type f -name apidiff.txt -print -quit)
+          # A missing or empty artifact is a broken release, not a release with
+          # no diff to report: verify already failed a non-zero gorelease, so
+          # the only way here is the upload failing -- and substituting "(no API
+          # diff available)" would let that pass as a normal release with nobody
+          # the wiser.
+          if [ ! -s "$diff_file" ]; then
+            echo "::error::apidiff.txt missing or empty -- the artifact upload must have failed"
+            exit 1
+          fi
+
+          notes="$RUNNER_TEMP/notes.md"
+          {
+            printf '## %s %s\n\n' '${{ needs.resolve.outputs.label }}' '${{ needs.resolve.outputs.version }}'
+            printf 'Verified with `%s` at the Go %s floor (NFR-02).\n\n' \
+              '${{ needs.verify.outputs.toolchain }}' '${{ env.GO_VERSION }}'
+            printf '### API changes\n\n```\n'
+            cat "$diff_file"
+            printf '```\n\n'
+            printf 'Requirements: [REQUIREMENTS.md](REQUIREMENTS.md) — '
+            printf 'Decisions: [docs/adr](docs/adr/README.md) — '
+            printf 'Threats: [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md)\n'
+          } > "$notes"
+          cat "$notes"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create '${{ github.ref_name }}' \
+            --repo '${{ github.repository }}' \
+            --title '${{ needs.resolve.outputs.label }} ${{ needs.resolve.outputs.version }}' \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --verify-tag
