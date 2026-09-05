@@ -25,8 +25,11 @@ the time stays readable. The convention is inherited from `crier`.
 | [0014](0014-interstitial-classification-in-core-rendering-in-cairnhttp.md) | The core classifies; `cairnhttp` renders the interstitial | Accepted | — |
 | [0015](0015-url-normalization-is-minimal.md) | URL normalization is minimal and semantics-preserving | Accepted | — |
 | [0016](0016-observability-through-hooks.md) | Observability is a `Hooks` struct, not an OpenTelemetry dependency | Accepted | — |
+| [0017](0017-conventions-are-enforced-not-documented.md) | Conventions are enforced mechanically, or they are not conventions | Accepted | — |
 
-These sixteen come from the opening design phase. ADR-0002 and ADR-0003 are a
+ADR-0001 through ADR-0016 come from the opening design phase; ADR-0017 came
+from building the pipeline that has to hold them, and is the only one so far
+that is about this repository rather than about the library. ADR-0002 and ADR-0003 are a
 pair and should be read together: the first decides what is built, the second
 records the alternative that was strong enough to deserve an argument rather than
 a dismissal. ADR-0007 is the one that breaks a convention the other two libraries
