@@ -2,6 +2,12 @@
 
 Guidance for Claude Code when working in this repository.
 
+The general engineering rules — effort proportional to the task, architecture
+discipline, clean code, testing, review, security, git hygiene, verification —
+are in `~/.claude/CLAUDE.md` and are already loaded. **This file carries only
+what is true of cairn**, and where it repeats a global rule it is because this
+repository makes it stricter or has paid for it specifically.
+
 ## What cairn is
 
 A Go library for URL shortening with security as a first-class requirement:
@@ -162,30 +168,32 @@ Decided, not open. Each is a defect if violated.
 
 ## Conventions
 
+Git hygiene, Conventional Commits and the review discipline are global. These
+are cairn's own, each tied to a requirement and enforced somewhere:
+
 - **English** for all code, comments, documentation and commit messages
   (NFR-12), regardless of the language a request was written in.
-- **Conventional Commits** (NFR-13). Scope is the package or area:
-  `feat(policy): block IPv4-mapped IPv6`, `fix(redisstore): …`, `docs(adr): …`.
-- **One subject per commit, staged explicitly.** Do not use `git add -A` when the
-  working tree holds work on more than one subject. A commit whose message does
-  not describe everything in it cannot be reviewed or reverted cleanly.
+- **Commit scopes** are this repository's packages: `cairn`, `policy`,
+  `memstore`, `cairnhttp`, `redisstore`, `adr`, `docs`, `deps`, `ci`,
+  `security`. The `commits` CI job rejects anything else.
 - **Every structural decision gets an ADR** (NFR-14). Do not silently resolve a
   question listed as open in `docs/adr/README.md` — write the ADR first.
 - **ADRs are never rewritten.** Amend in place, or supersede with a new one that
-  names the old.
-- **Go 1.24 is the floor** in the core (NFR-02). Do not raise it for convenience;
-  a library's `go` directive is a promise about who may import it.
+  names the old. `adr-immutability` in CI fails when an accepted ADR loses a
+  line.
+- **Go 1.24 is the floor** in the core (NFR-02). Do not raise it for
+  convenience; a library's `go` directive is a promise about who may import it.
 - **Tests are table-driven**, use `t.Run` subtests, and assert the specific
   behaviour — not just "no error".
-- **Public packages carry testable examples** (`ExampleXxx`), matching `moat` and
-  `crier` (NFR-09).
+- **Public packages carry testable examples** (`ExampleXxx`), matching `moat`
+  and `crier` (NFR-09). `check-docs.sh` fails without them.
 - **Integration tests use testcontainers against real Redis** (NFR-10), never
   miniredis. A fake that implements `SetNX` correctly proves nothing about the
   server that has to.
 - **Lua scripts in `.lua` files** via `go:embed` (NFR-11), never Go string
   literals.
 - **Branches**: feature → `develop` via PR; `main` is the release branch
-  (NFR-16).
+  (NFR-16). Both are protected and require the `CI OK` check.
 
 ## Writing security tests
 
@@ -217,3 +225,31 @@ Written down so they are avoided rather than rediscovered:
   overwrites them. Tested with the chain in place, not alone.
 - **Validating after key construction.** Reversing the order in SR-21 produces
   code that looks identical and is not.
+
+## Tooling, and where it helps here
+
+Installed globally; this is what is worth reaching for in *this* repository.
+
+- **`/security-review`, and `claude-security` for a deeper pass.** cairn's
+  reason to exist is its threat model, so a security review here is not a
+  formality — it is the product. Every finding must name the `SR-` it breaks
+  and the `T-` it enables, or it is not a finding, it is a worry.
+- **Superpowers' `systematic-debugging` and `writing-plans`** for M1 onward.
+  Its `test-driven-development` skill fits the `SR-` work particularly well,
+  because a negative control *is* red-green-refactor: watch it fail with the
+  protection removed, then restore it.
+- **`/impeccable` and the animation skills do not apply here.** cairn has no
+  frontend and will not get one — `cairnhttp` renders one plain interstitial
+  page, deliberately unstyled so a host replaces it (ADR-0014). If you find
+  yourself polishing it, the boundary has been crossed.
+- **Playwright does not apply either.** There is no web application. The
+  equivalent for this repository is the threat-probe script of NFR-17, run
+  against the demo stack.
+- **Graphify** is covered in its own section above.
+
+The general rule that effort is proportional to the task applies with one
+exception, stated because this repository is where it bites: **anything
+touching an `SR-` requirement is a complex task regardless of its diff size.**
+A one-line change to code generation, conditional write, code validation
+ordering, or the redaction surface gets the full flow, because the line count
+is not what makes those dangerous.
