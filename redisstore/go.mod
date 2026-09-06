@@ -18,6 +18,14 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/redis v0.44.0
 )
 
+// v0.1.0 shipped no GitHub Release: release.yml's "Verify" job used the
+// core's GO_VERSION (1.24) instead of GO_SUPPORTED_VERSION for this module,
+// and this module's own floor is 1.25.0 -- so the verify step failed before
+// publishing anything. The tag is real, signed, and already cached by the
+// module proxy; the code at it is fine. Retracted per RELEASING.md's "If a
+// release is wrong" section rather than deleted or reused.
+retract v0.1.0 // release.yml used the wrong toolchain floor; no GitHub Release exists for this tag
+
 require (
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
