@@ -159,6 +159,9 @@ does **not** check ownership. The Service must load the link, compare
 passes every test written by the person who wrote the code. It gets a dedicated
 negative test in `task-api`: user A cannot revoke user B's link.
 
+See [`docs/integrations/task-api.md`](integrations/task-api.md) for the exact
+pattern and the real, running test that proves it.
+
 ### 4.2 Error envelope mapping (FR-12)
 
 `task-api` has a standardized JSON error envelope. `cairnhttp.ErrorEncoder` is
