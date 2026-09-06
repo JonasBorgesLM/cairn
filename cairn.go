@@ -103,9 +103,24 @@ func WithDefaultTTL(d time.Duration) Option { return func(o *options) { o.defaul
 // (ADR-0009).
 func WithExpiryGrace(d time.Duration) Option { return func(o *options) { o.expiryGrace = d } }
 
-// WithVanity enables caller-chosen codes in [minLen, maxLen], with reserved
-// excluded outright (ErrVanityReserved). The range must not include the
-// generated code length (SR-04, ADR-0011).
+// DefaultVanityReserved is always rejected with ErrVanityReserved, whether or
+// not a caller passes its own list to WithVanity — merged in, never
+// something a caller has to remember to ask for. Without it, a vanity code
+// shadows one of the host's own routes, which is a routing bug that presents
+// as a security incident (ADR-0011).
+var DefaultVanityReserved = []string{
+	"admin", "api", "health", "login", "static", "assets",
+	"robots.txt", "favicon.ico", ".well-known",
+}
+
+// WithVanity enables caller-chosen codes in [minLen, maxLen]. A vanity code
+// is a public name a caller picks for memorability, never a capability: it
+// is exactly as guessable as the string chosen, and a link that must be
+// unguessable must not be vanity (ADR-0011).
+//
+// reserved is merged with DefaultVanityReserved and excluded outright
+// (ErrVanityReserved); pass nil for just the default list. The range must
+// not include the generated code length (SR-04, ADR-0011).
 func WithVanity(minLen, maxLen int, reserved []string) Option {
 	return func(o *options) {
 		o.vanityEnabled = true
@@ -218,7 +233,10 @@ func New(store Store, opts ...Option) (*Shortener, error) {
 		return nil, fmt.Errorf("cairn: WithMaxSaveAttempts must be positive, got %d", o.maxSaveAttempts)
 	}
 
-	reserved := make(map[string]bool, len(o.vanityReserved))
+	reserved := make(map[string]bool, len(DefaultVanityReserved)+len(o.vanityReserved))
+	for _, r := range DefaultVanityReserved {
+		reserved[r] = true
+	}
 	for _, r := range o.vanityReserved {
 		reserved[r] = true
 	}
