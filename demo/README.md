@@ -71,7 +71,7 @@ curl -si -X POST http://localhost:8080/links/AbCdEf1234/revoke
 HTTP/1.1 204 No Content
 ```
 
-Resolving again now returns `410`, indistinguishably from a code that never
+Resolving again now returns `404`, indistinguishably from a code that never
 existed unless the caller opts into telling them apart (SR-03):
 
 ```bash

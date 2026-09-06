@@ -7,8 +7,8 @@ module github.com/JonasBorgesLM/cairn/demo
 go 1.25.0
 
 require (
-	github.com/JonasBorgesLM/cairn v0.0.0-20260906061913-523af00bd46f
-	github.com/JonasBorgesLM/cairn/redisstore v0.0.0-20260906061913-523af00bd46f
+	github.com/JonasBorgesLM/cairn v0.0.0-20260906071828-75d5bc578f6d
+	github.com/JonasBorgesLM/cairn/redisstore v0.0.0-20260906071828-75d5bc578f6d
 	github.com/JonasBorgesLM/moat v0.2.0
 )
 
