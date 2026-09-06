@@ -131,8 +131,13 @@ fi
 if command -v go >/dev/null 2>&1; then
   no_example=""
   for mod in . redisstore; do
+    modpath="github.com/JonasBorgesLM/cairn"
+    [ "$mod" != "." ] && modpath="$modpath/$mod"
     while IFS= read -r pkg; do
-      dir="$mod/${pkg#github.com/JonasBorgesLM/cairn}"
+      suffix="${pkg#"$modpath"}"
+      suffix="${suffix#/}"
+      dir="$mod"
+      [ -n "$suffix" ] && dir="$mod/$suffix"
       dir=${dir#./}; dir=${dir%/}; [ -z "$dir" ] && dir="."
       [ -d "$dir" ] || continue
       # Exported identifiers, ignoring test files.
