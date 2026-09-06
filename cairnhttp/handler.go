@@ -11,10 +11,14 @@ import (
 // Handler resolves a code from the request path and redirects to its
 // destination. Mount it at the root of whatever it serves — it treats the
 // whole request path (minus the leading slash) as the code.
+//
+// Call Close when done with a Handler, so any count still queued gets a
+// chance to be recorded rather than dropped; see Close.
 type Handler struct {
 	shortener        *cairn.Shortener
 	errorEncoder     ErrorEncoder
 	interstitialTmpl *template.Template
+	counterState
 }
 
 // Option configures a Handler at construction.
@@ -36,12 +40,31 @@ func WithInterstitial(t *template.Template) Option {
 	return func(h *Handler) { h.interstitialTmpl = t }
 }
 
+// WithCounterErrorHandler is called when the configured Counter (via
+// cairn.WithCounter on the Shortener) returns an error, so a host can
+// observe counting failures without them ever reaching the visitor — a
+// Counter failure never changes the response, by construction: counting
+// happens after the response is already written (FR-14, ADR-0012). Default
+// is a no-op.
+func WithCounterErrorHandler(fn func(code cairn.Code, err error)) Option {
+	return func(h *Handler) { h.onCounterError = fn }
+}
+
 // NewHandler returns a Handler resolving codes through s.
 func NewHandler(s *cairn.Shortener, opts ...Option) *Handler {
-	h := &Handler{shortener: s, errorEncoder: DefaultErrorEncoder}
+	h := &Handler{
+		shortener:    s,
+		errorEncoder: DefaultErrorEncoder,
+		counterState: counterState{
+			counterQueue:   make(chan cairn.Code, counterQueueSize),
+			counterDone:    make(chan struct{}),
+			onCounterError: func(cairn.Code, error) {},
+		},
+	}
 	for _, opt := range opts {
 		opt(h)
 	}
+	go h.runCounter()
 	return h
 }
 
@@ -81,6 +104,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Location", dest.String())
 	w.WriteHeader(http.StatusFound)
+
+	// Off the critical path (FR-14): queued for a background goroutine,
+	// never awaited here. See runCounter and Close.
+	h.enqueueCount(code)
 }
 
 // renderInterstitial writes the warning page. It carries the same no-store

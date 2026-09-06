@@ -101,6 +101,64 @@ func TestCreate_FiresOnCreate(t *testing.T) {
 
 // --- Dedup ---
 
+// Off by default: SR-17 exists because dedup is an existence oracle, and
+// that only holds if a caller must opt in explicitly.
+func TestCreate_DedupIsOffByDefault(t *testing.T) {
+	fs := newFakeStore()
+	di := fakeDestIndex{fs}
+	s, err := cairn.New(di, cairn.WithPolicy(allowPolicy{})) // no WithDeduplication
+
+	if err != nil {
+		t.Fatalf("New error = %v", err)
+	}
+
+	first, err := s.Create(context.Background(), "https://example.com/", cairn.WithOwner("user-1"))
+	if err != nil {
+		t.Fatalf("first Create error = %v", err)
+	}
+	second, err := s.Create(context.Background(), "https://example.com/", cairn.WithOwner("user-1"))
+	if err != nil {
+		t.Fatalf("second Create error = %v", err)
+	}
+	if second.Code == first.Code {
+		t.Fatalf("second.Code = %q, same as first %q, want two distinct codes (dedup is off by default)", second.Code, first.Code)
+	}
+	if fs.saveCallCount() != 2 {
+		t.Fatalf("Save called %d times, want 2 (no dedup lookup should have short-circuited the second)", fs.saveCallCount())
+	}
+}
+
+// A dedup hit must not extend the existing link's life: silently applying a
+// later create call's TTL to someone else's earlier link is an ownership
+// violation (ADR-0013).
+func TestCreate_DedupHitDoesNotModifyTheExistingLinksTTL(t *testing.T) {
+	fs := newFakeStore()
+	di := fakeDestIndex{fs}
+	s, err := cairn.New(di, cairn.WithPolicy(allowPolicy{}), cairn.WithDeduplication(true))
+	if err != nil {
+		t.Fatalf("New error = %v", err)
+	}
+
+	first, err := s.Create(context.Background(), "https://example.com/", cairn.WithOwner("user-1"))
+	if err != nil {
+		t.Fatalf("first Create error = %v", err)
+	}
+	if !first.ExpiresAt.IsZero() {
+		t.Fatalf("first.ExpiresAt = %v, want zero (no TTL requested)", first.ExpiresAt)
+	}
+
+	second, err := s.Create(context.Background(), "https://example.com/", cairn.WithOwner("user-1"), cairn.WithTTL(time.Hour))
+	if err != nil {
+		t.Fatalf("second Create error = %v", err)
+	}
+	if second.Code != first.Code {
+		t.Fatalf("second.Code = %q, want %q (dedup hit)", second.Code, first.Code)
+	}
+	if !second.ExpiresAt.IsZero() {
+		t.Fatalf("second.ExpiresAt = %v, want zero: the requested TTL must not modify the existing link", second.ExpiresAt)
+	}
+}
+
 func TestCreate_DedupReturnsExistingLinkOnHit(t *testing.T) {
 	fs := newFakeStore()
 	di := fakeDestIndex{fs}
@@ -204,6 +262,65 @@ func TestCreate_VanityCode_RejectsLengthEqualToGeneratedLength(t *testing.T) {
 	_, err := s.Create(context.Background(), "https://example.com/", cairn.WithVanityCode(cairn.Code("abcdefghij"))) // len 10
 	if !errors.Is(err, cairn.ErrVanityLength) {
 		t.Fatalf("error = %v, want errors.Is(_, ErrVanityLength)", err)
+	}
+}
+
+// Zero store round trips: a generated-length candidate is rejected on length
+// alone, before any lookup, so submitting one returns nothing about
+// occupancy of the generated space (SR-04, ADR-0011).
+func TestCreate_VanityCode_GeneratedLengthRejectedWithZeroStoreRoundTrips(t *testing.T) {
+	fs := newFakeStore()
+	s := newShortener(t, fs, cairn.WithCodeLength(10), cairn.WithVanity(4, 8, nil))
+
+	_, err := s.Create(context.Background(), "https://example.com/", cairn.WithVanityCode(cairn.Code("abcdefghij"))) // len 10
+	if !errors.Is(err, cairn.ErrVanityLength) {
+		t.Fatalf("error = %v, want errors.Is(_, ErrVanityLength)", err)
+	}
+	if fs.saveCallCount() != 0 {
+		t.Fatalf("Save called %d times, want 0 (rejected on length, before any store round trip)", fs.saveCallCount())
+	}
+}
+
+// A default reserved-word list is always in effect, extendable but never
+// something a caller has to remember to ask for (ADR-0011): a vanity code
+// shadowing the host's own routes is a routing bug that presents as a
+// security incident.
+func TestCreate_VanityCode_DefaultReservedWordsAreAlwaysRejected(t *testing.T) {
+	for _, word := range cairn.DefaultVanityReserved {
+		t.Run(word, func(t *testing.T) {
+			fs := newFakeStore()
+			s := newShortener(t, fs, cairn.WithCodeLength(10), cairn.WithVanity(3, 8, nil)) // no caller-supplied reserved list; range excludes 10
+			_, err := s.Create(context.Background(), "https://example.com/", cairn.WithVanityCode(cairn.Code(word)))
+			// Three of the default entries (robots.txt, favicon.ico,
+			// .well-known) contain '.', which AlphabetBase62 does not
+			// permit, so they are rejected as invalid codes before the
+			// reserved-word check ever runs. That is still "never became a
+			// live link" -- the property this test is actually about -- so
+			// both outcomes count as a pass, distinguished for precision.
+			if err == nil {
+				t.Fatalf("Create(vanity=%q) error = nil, want a rejection", word)
+			}
+			if !errors.Is(err, cairn.ErrVanityReserved) && !errors.Is(err, cairn.ErrInvalidCode) {
+				t.Fatalf("Create(vanity=%q) error = %v, want ErrVanityReserved or ErrInvalidCode", word, err)
+			}
+		})
+	}
+}
+
+// A caller-supplied reserved list is additive, not a replacement for the
+// default.
+func TestCreate_VanityCode_CallerReservedListIsAdditiveToTheDefault(t *testing.T) {
+	fs := newFakeStore()
+	s := newShortener(t, fs, cairn.WithCodeLength(10), cairn.WithVanity(3, 8, []string{"launch"}))
+
+	_, err := s.Create(context.Background(), "https://example.com/", cairn.WithVanityCode(cairn.Code("admin"))) // default-list word
+	if !errors.Is(err, cairn.ErrVanityReserved) {
+		t.Fatalf("error = %v, want errors.Is(_, ErrVanityReserved) for a default-reserved word", err)
+	}
+
+	_, err = s.Create(context.Background(), "https://example.com/", cairn.WithVanityCode(cairn.Code("launch"))) // caller-supplied word
+	if !errors.Is(err, cairn.ErrVanityReserved) {
+		t.Fatalf("error = %v, want errors.Is(_, ErrVanityReserved) for the caller-supplied word", err)
 	}
 }
 
