@@ -16,3 +16,5 @@ module github.com/JonasBorgesLM/cairn
 // destination.go, pinned to an exact version, and Dependabot is configured not
 // to bump it.
 go 1.24
+
+require github.com/JonasBorgesLM/moat v0.2.0
