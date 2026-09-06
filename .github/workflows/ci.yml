@@ -490,6 +490,44 @@ jobs:
           fi
           go test -tags=integration -race ./...
 
+  # ------------------------------------------------------------- demo ----
+  #
+  # Issue #51 (IR-05): the demo is the thing a reviewer runs without reading
+  # code, and issue #48's threat probes are stated as running against it. A
+  # demo that only works when someone remembers to try it by hand is not the
+  # thing those issues asked for -- this job is that trying, done by CI on
+  # every push.
+  demo:
+    name: demo (docker compose + threat probes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: docker compose up
+        run: docker compose up --build -d
+
+      - name: Wait for the demo to answer
+        run: |
+          for _ in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/doesnotexist1 || true)
+            [ "$code" != "" ] && [ "$code" != "000" ] && exit 0
+            sleep 1
+          done
+          echo "::error::the demo never answered on :8080"
+          docker compose logs
+          exit 1
+
+      - name: docs/security/probe-threats.sh
+        run: docs/security/probe-threats.sh
+
+      - name: docker compose logs (always, for the record)
+        if: always()
+        run: docker compose logs
+
+      - name: docker compose down
+        if: always()
+        run: docker compose down -v
+
   # -------------------------------------------------- dependency review ----
   dependency-review:
     name: dependency review
@@ -529,6 +567,7 @@ jobs:
       - adr-immutability
       - commits
       - integration
+      - demo
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any dependency failed

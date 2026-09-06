@@ -1,0 +1,48 @@
+Recorded run of docs/security/probe-threats.sh, 2026-09-06, against the
+docker-compose demo built from this branch. Reproduce with:
+
+  docker compose up --build -d
+  docs/security/probe-threats.sh
+
+Codes and exact timing (T-01, T-08) will differ between runs; the pass/fail
+column is what matters, and is deterministic modulo the T-10 rate-limit race
+noted in the script's own comments.
+
+T-01: consecutive codes are not sequential                 PASS  (AzI4V0tPTP / zY1UaDQ292, no shared prefix relationship)
+T-02: codes are fixed-length from the configured alphabet  PASS  (both length 10)
+----  T-03: not probed externally. This demo's create route never lets a
+----    caller choose a code (no vanity exposed), so there is no HTTP-reachable
+----    way to attempt a second Save at an existing code. SR-18's conditional
+----    write is covered by TestSave_SecondSaveLeavesOriginalByteIdentical's
+----    negative control (docs/audit-log.md) instead.
+T-04: disallowed scheme is rejected (SR-05)                PASS  (422)
+----  T-04: the interstitial half (FR-13/SR-24) is not probed here --
+----    policy.Default never returns Interstitial, so this demo's policy has
+----    no path that reaches it. Covered by TestHandler_ContinueIgnoresAny...
+----    and the negative control recorded in docs/audit-log.md's SR-24 row.
+T-05: internal/metadata destination is rejected (SR-07)    PASS  (422)
+T-06: the raw destination never reaches the demo's own logs PASS  (token absent from demo logs (SR-15 holding end to end))
+T-07: revoked link stops redirecting immediately           PASS  (302 -> 410)
+T-07: redirect never carries a caching directive that survives it PASS  (Cache-Control: no-store)
+T-08: dedup is off by default (same URL twice -> two codes) PASS  (hidKMKMYKM / uigZHcYu5g)
+----  T-09: not probed. This demo's POST /links accepts only a destination
+----    URL, never a caller-chosen code, so vanity creation is not reachable
+----    through it at all. Covered by TestCreate_VanityCode_* (create_test.go).
+T-10: a creation burst is rate limited (IR-01)             PASS  (42 of 80 refused)
+T-11: a code with store-special characters is just not-found PASS  (404)
+T-12: create and resolve fail closed with Redis stopped    PASS  (create=503 resolve=503)
+T-13: redirect carries Referrer-Policy: no-referrer        PASS  (Referrer-Policy: no-referrer)
+----  T-14: not probed. Same reason as T-04's interstitial half: this demo's
+----    policy never returns Interstitial. Covered by
+----    TestHandler_ContinueIgnoresAnyDestinationSuppliedInTheRequest and
+----    TestHandler_NeverReflectsAQueryParameterAsADestination, both with a
+----    recorded negative control (docs/audit-log.md, SR-24).
+T-15: Redis is configured per ADR-0008 (AOF everysec, noeviction) PASS  (appendonly=yes appendfsync=everysec maxmemory-policy=noeviction)
+----  T-15: the demo already enforces the noeviction half at every startup
+----    (redisstore.EvictionCheck, called from cairn.New) -- this probe is a
+----    second, independent check of the same fact plus the AOF settings
+----    EvictionCheck does not look at. A replica and an exercised restore
+----    procedure, ADR-0008's other two requirements, are not demonstrated by
+----    a one-container compose file; see demo/README.md.
+
+probes failed: 0
