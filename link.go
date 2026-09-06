@@ -23,6 +23,15 @@ type Link struct {
 	// generated (ADR-0011).
 	Vanity bool
 
+	// Interstitial reports whether Policy.Evaluate classified Dest as
+	// Interstitial at creation. The classification is fixed here rather than
+	// re-evaluated on resolve, which keeps DNS off the redirect path and
+	// keeps a link's behaviour stable for its lifetime — a destination added
+	// to an allowlist later does not retroactively stop warning; recreating
+	// the link does (ADR-0014). cairnhttp reads this field to decide whether
+	// to render a warning page; Resolve itself does not act on it.
+	Interstitial bool
+
 	// CreatedAt is when the link was created.
 	CreatedAt time.Time
 

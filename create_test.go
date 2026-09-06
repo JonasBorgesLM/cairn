@@ -1,0 +1,384 @@
+package cairn_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/JonasBorgesLM/cairn"
+)
+
+func newShortener(t *testing.T, store cairn.Store, opts ...cairn.Option) *cairn.Shortener {
+	t.Helper()
+	s, err := cairn.New(store, append([]cairn.Option{cairn.WithPolicy(allowPolicy{})}, opts...)...)
+	if err != nil {
+		t.Fatalf("New error = %v", err)
+	}
+	return s
+}
+
+func TestCreate_RejectsAnInvalidDestination(t *testing.T) {
+	s := newShortener(t, newFakeStore())
+	_, err := s.Create(context.Background(), "javascript:alert(1)")
+	if err == nil {
+		t.Fatalf("Create error = nil, want non-nil")
+	}
+	reason, ok := cairn.RejectReasonFrom(err)
+	if !ok || reason != cairn.ReasonScheme {
+		t.Fatalf("RejectReasonFrom = (%q, %v), want (%q, true)", reason, ok, cairn.ReasonScheme)
+	}
+}
+
+func TestCreate_DeniedByPolicyFiresOnRejectAndReturnsNoLink(t *testing.T) {
+	var rejected cairn.RejectEvent
+	fired := false
+	hooks := cairn.Hooks{OnReject: func(_ context.Context, ev cairn.RejectEvent) { fired = true; rejected = ev }}
+
+	fs := newFakeStore()
+	s, err := cairn.New(fs, cairn.WithPolicy(stubPolicy{decision: cairn.Deny, reason: cairn.ReasonOwnDomain}), cairn.WithHooks(hooks))
+	if err != nil {
+		t.Fatalf("New error = %v", err)
+	}
+
+	link, err := s.Create(context.Background(), "https://example.com/")
+	if err == nil {
+		t.Fatalf("Create error = nil, want non-nil")
+	}
+	if link != nil {
+		t.Fatalf("Create link = %+v, want nil", link)
+	}
+	if !errors.Is(err, cairn.ErrDestinationRejected) {
+		t.Fatalf("error = %v, want errors.Is(_, ErrDestinationRejected)", err)
+	}
+	if !fired {
+		t.Fatalf("OnReject was not fired")
+	}
+	if rejected.Reason != cairn.ReasonOwnDomain {
+		t.Fatalf("RejectEvent.Reason = %q, want %q", rejected.Reason, cairn.ReasonOwnDomain)
+	}
+	if fs.saveCallCount() != 0 {
+		t.Fatalf("Save was called %d times, want 0 (denied before ever reaching the store)", fs.saveCallCount())
+	}
+}
+
+func TestCreate_InterstitialIsMarkedOnTheRecord(t *testing.T) {
+	fs := newFakeStore()
+	s, err := cairn.New(fs, cairn.WithPolicy(stubPolicy{decision: cairn.Interstitial, reason: cairn.ReasonNotAllowlisted}))
+	if err != nil {
+		t.Fatalf("New error = %v", err)
+	}
+	link, err := s.Create(context.Background(), "https://example.com/")
+	if err != nil {
+		t.Fatalf("Create error = %v, want nil", err)
+	}
+	if !link.Interstitial {
+		t.Fatalf("Interstitial = false, want true")
+	}
+}
+
+func TestCreate_FiresOnCreate(t *testing.T) {
+	var got cairn.CreateEvent
+	fired := false
+	fs := newFakeStore()
+	s, err := cairn.New(fs, cairn.WithPolicy(allowPolicy{}),
+		cairn.WithHooks(cairn.Hooks{OnCreate: func(_ context.Context, ev cairn.CreateEvent) { fired = true; got = ev }}),
+	)
+	if err != nil {
+		t.Fatalf("New error = %v", err)
+	}
+	link, err := s.Create(context.Background(), "https://example.com/", cairn.WithOwner("user-1"))
+	if err != nil {
+		t.Fatalf("Create error = %v", err)
+	}
+	if !fired {
+		t.Fatalf("OnCreate was not fired")
+	}
+	if got.Code != link.Code || got.OwnerID != "user-1" {
+		t.Fatalf("CreateEvent = %+v, want Code=%q OwnerID=user-1", got, link.Code)
+	}
+}
+
+// --- Dedup ---
+
+func TestCreate_DedupReturnsExistingLinkOnHit(t *testing.T) {
+	fs := newFakeStore()
+	di := fakeDestIndex{fs}
+	s, err := cairn.New(di, cairn.WithPolicy(allowPolicy{}), cairn.WithDeduplication(true))
+	if err != nil {
+		t.Fatalf("New error = %v", err)
+	}
+
+	first, err := s.Create(context.Background(), "https://example.com/", cairn.WithOwner("user-1"))
+	if err != nil {
+		t.Fatalf("first Create error = %v", err)
+	}
+	second, err := s.Create(context.Background(), "https://example.com/", cairn.WithOwner("user-1"))
+	if err != nil {
+		t.Fatalf("second Create error = %v", err)
+	}
+	if second.Code != first.Code {
+		t.Fatalf("second.Code = %q, want %q (dedup hit)", second.Code, first.Code)
+	}
+	if fs.saveCallCount() != 1 {
+		t.Fatalf("Save called %d times, want 1 (second call should hit dedup, not save again)", fs.saveCallCount())
+	}
+}
+
+func TestCreate_DedupIsScopedPerOwner(t *testing.T) {
+	fs := newFakeStore()
+	di := fakeDestIndex{fs}
+	s, err := cairn.New(di, cairn.WithPolicy(allowPolicy{}), cairn.WithDeduplication(true))
+	if err != nil {
+		t.Fatalf("New error = %v", err)
+	}
+
+	a, err := s.Create(context.Background(), "https://example.com/", cairn.WithOwner("user-a"))
+	if err != nil {
+		t.Fatalf("Create error = %v", err)
+	}
+	b, err := s.Create(context.Background(), "https://example.com/", cairn.WithOwner("user-b"))
+	if err != nil {
+		t.Fatalf("Create error = %v", err)
+	}
+	if a.Code == b.Code {
+		t.Fatalf("different owners got the same code %q, want dedup scoped per owner", a.Code)
+	}
+}
+
+// This is one of the two load-bearing orderings issue #28 names explicitly:
+// Save must happen before dedup indexing. A store whose Save always fails
+// must never see an IndexDest call.
+func TestCreate_SavesBeforeIndexingForDedup(t *testing.T) {
+	fs := newFakeStore()
+	fs.saveErr = errors.New("store down")
+	di := &countingDestIndex{fakeDestIndex: fakeDestIndex{fs}}
+	s, err := cairn.New(di, cairn.WithPolicy(allowPolicy{}), cairn.WithDeduplication(true))
+	if err != nil {
+		t.Fatalf("New error = %v", err)
+	}
+
+	_, err = s.Create(context.Background(), "https://example.com/")
+	if err == nil {
+		t.Fatalf("Create error = nil, want non-nil (store is down)")
+	}
+	if di.indexCalls != 0 {
+		t.Fatalf("IndexDest was called %d times, want 0 (Save failed, so indexing must not happen)", di.indexCalls)
+	}
+}
+
+type countingDestIndex struct {
+	fakeDestIndex
+	indexCalls int
+}
+
+func (d *countingDestIndex) IndexDest(ctx context.Context, ownerID string, dest cairn.Destination, c cairn.Code) error {
+	d.indexCalls++
+	return d.fakeDestIndex.IndexDest(ctx, ownerID, dest, c)
+}
+
+// --- Vanity codes ---
+
+func TestCreate_VanityCode_UsesTheRequestedCode(t *testing.T) {
+	fs := newFakeStore()
+	s := newShortener(t, fs, cairn.WithCodeLength(10), cairn.WithVanity(4, 8, nil))
+	link, err := s.Create(context.Background(), "https://example.com/", cairn.WithVanityCode(cairn.Code("launch")))
+	if err != nil {
+		t.Fatalf("Create error = %v", err)
+	}
+	if link.Code != "launch" {
+		t.Fatalf("Code = %q, want %q", link.Code, "launch")
+	}
+	if !link.Vanity {
+		t.Fatalf("Vanity = false, want true")
+	}
+}
+
+func TestCreate_VanityCode_RejectsLengthEqualToGeneratedLength(t *testing.T) {
+	fs := newFakeStore()
+	// The vanity range [4, 8] does not overlap the generated length 10 --
+	// New requires that (SR-04) -- but a caller can still submit a
+	// vanity code whose length happens to equal 10, and that must be
+	// rejected regardless of the configured range.
+	s := newShortener(t, fs, cairn.WithCodeLength(10), cairn.WithVanity(4, 8, nil))
+	_, err := s.Create(context.Background(), "https://example.com/", cairn.WithVanityCode(cairn.Code("abcdefghij"))) // len 10
+	if !errors.Is(err, cairn.ErrVanityLength) {
+		t.Fatalf("error = %v, want errors.Is(_, ErrVanityLength)", err)
+	}
+}
+
+func TestCreate_VanityCode_RejectsReservedWord(t *testing.T) {
+	fs := newFakeStore()
+	s := newShortener(t, fs, cairn.WithCodeLength(10), cairn.WithVanity(3, 8, []string{"admin"}))
+	_, err := s.Create(context.Background(), "https://example.com/", cairn.WithVanityCode(cairn.Code("admin")))
+	if !errors.Is(err, cairn.ErrVanityReserved) {
+		t.Fatalf("error = %v, want errors.Is(_, ErrVanityReserved)", err)
+	}
+}
+
+// This is the second load-bearing ordering from issue #28: retrying a vanity
+// code would silently issue a different code than the caller asked for, so a
+// vanity collision must return ErrCodeExists directly, with exactly one Save
+// attempt.
+func TestCreate_VanityCode_CollisionIsNotRetried(t *testing.T) {
+	fs := newFakeStore()
+	fs.saveErr = cairn.ErrCodeExists
+	s := newShortener(t, fs, cairn.WithCodeLength(10), cairn.WithVanity(4, 8, nil), cairn.WithMaxSaveAttempts(5))
+
+	_, err := s.Create(context.Background(), "https://example.com/", cairn.WithVanityCode(cairn.Code("launch")))
+	if !errors.Is(err, cairn.ErrCodeExists) {
+		t.Fatalf("error = %v, want errors.Is(_, ErrCodeExists)", err)
+	}
+	if fs.saveCallCount() != 1 {
+		t.Fatalf("Save called %d times, want exactly 1 (no retry for a vanity code)", fs.saveCallCount())
+	}
+}
+
+// --- Generated-code retry (SR-18, SR-19) ---
+
+func TestCreate_RetriesOnCollisionUpToMaxSaveAttempts(t *testing.T) {
+	fs := newFakeStore()
+	fs.saveErr = cairn.ErrCodeExists
+	var retries []cairn.RetryEvent
+	s := newShortener(t, fs, cairn.WithMaxSaveAttempts(3),
+		cairn.WithHooks(cairn.Hooks{OnRetry: func(_ context.Context, ev cairn.RetryEvent) { retries = append(retries, ev) }}),
+	)
+
+	_, err := s.Create(context.Background(), "https://example.com/")
+	if !errors.Is(err, cairn.ErrCodeSpaceExhausted) {
+		t.Fatalf("error = %v, want errors.Is(_, ErrCodeSpaceExhausted)", err)
+	}
+	if fs.saveCallCount() != 3 {
+		t.Fatalf("Save called %d times, want exactly 3 (bounded by WithMaxSaveAttempts)", fs.saveCallCount())
+	}
+	if len(retries) != 3 {
+		t.Fatalf("OnRetry fired %d times, want 3 (once per attempt)", len(retries))
+	}
+	for i, ev := range retries {
+		if ev.Attempt != i+1 {
+			t.Fatalf("retries[%d].Attempt = %d, want %d", i, ev.Attempt, i+1)
+		}
+	}
+}
+
+func TestCreate_SucceedsAfterACollisionOnAnEarlierAttempt(t *testing.T) {
+	fs := newFakeStore()
+	attempts := 0
+	s := newShortener(t, &firstAttemptFailsStore{fakeStore: fs, failFirstNAttempts: 1, attempts: &attempts})
+
+	link, err := s.Create(context.Background(), "https://example.com/")
+	if err != nil {
+		t.Fatalf("Create error = %v, want nil", err)
+	}
+	if link == nil {
+		t.Fatalf("Create returned a nil link with a nil error")
+	}
+	if attempts != 2 {
+		t.Fatalf("Save called %d times, want 2 (one collision, then success)", attempts)
+	}
+}
+
+type firstAttemptFailsStore struct {
+	*fakeStore
+	failFirstNAttempts int
+	attempts           *int
+}
+
+func (s *firstAttemptFailsStore) Save(ctx context.Context, l *cairn.Link) error {
+	*s.attempts++
+	if *s.attempts <= s.failFirstNAttempts {
+		return cairn.ErrCodeExists
+	}
+	return s.fakeStore.Save(ctx, l)
+}
+
+// Negative control for the retry bound: with createGenerated's loop
+// temporarily changed from `attempt <= s.maxSaveAttempts` to an unconditional
+// `true`, this exact test failed -- Create did not return within the 2s
+// watchdog below, confirming the loop is genuinely unbounded without the
+// check. The loop condition was restored immediately after. This test
+// asserts the bounded (correct) behavior terminates promptly.
+func TestCreate_RetryTerminatesPromptlyRatherThanLooping(t *testing.T) {
+	fs := newFakeStore()
+	fs.saveErr = cairn.ErrCodeExists
+	s := newShortener(t, fs, cairn.WithMaxSaveAttempts(5))
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.Create(context.Background(), "https://example.com/")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, cairn.ErrCodeSpaceExhausted) {
+			t.Fatalf("error = %v, want errors.Is(_, ErrCodeSpaceExhausted)", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Create did not return within 2s; retry loop appears unbounded")
+	}
+}
+
+// SR-20: a non-collision store error must yield no link and must not fire
+// OnCreate -- a hook claiming success for a create that failed would be a
+// lie the host has no way to detect.
+func TestCreate_StoreErrorYieldsNoLinkAndNoSuccessHook(t *testing.T) {
+	fs := newFakeStore()
+	fs.saveErr = cairn.ErrStoreUnavailable
+	onCreateFired := false
+	s := newShortener(t, fs, cairn.WithHooks(cairn.Hooks{OnCreate: func(context.Context, cairn.CreateEvent) { onCreateFired = true }}))
+
+	link, err := s.Create(context.Background(), "https://example.com/")
+	if !errors.Is(err, cairn.ErrStoreUnavailable) {
+		t.Fatalf("error = %v, want errors.Is(_, ErrStoreUnavailable)", err)
+	}
+	if link != nil {
+		t.Fatalf("link = %+v, want nil", link)
+	}
+	if onCreateFired {
+		t.Fatalf("OnCreate fired for a failed create")
+	}
+	if fs.saveCallCount() != 1 {
+		t.Fatalf("Save called %d times, want exactly 1 (a non-collision error must not retry)", fs.saveCallCount())
+	}
+}
+
+// --- Normalization and TTL ---
+
+func TestCreate_NormalizesTheDestination(t *testing.T) {
+	fs := newFakeStore()
+	s := newShortener(t, fs)
+	link, err := s.Create(context.Background(), "HTTP://Example.com:80/path")
+	if err != nil {
+		t.Fatalf("Create error = %v", err)
+	}
+	if got, want := link.Dest.Raw(), "http://example.com/path"; got != want {
+		t.Fatalf("Dest.Raw() = %q, want %q", got, want)
+	}
+}
+
+func TestCreate_AppliesDefaultTTL(t *testing.T) {
+	fixedNow := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	fs := newFakeStore()
+	s := newShortener(t, fs, cairn.WithDefaultTTL(time.Hour), cairn.WithClock(func() time.Time { return fixedNow }))
+	link, err := s.Create(context.Background(), "https://example.com/")
+	if err != nil {
+		t.Fatalf("Create error = %v", err)
+	}
+	if !link.ExpiresAt.Equal(fixedNow.Add(time.Hour)) {
+		t.Fatalf("ExpiresAt = %v, want %v", link.ExpiresAt, fixedNow.Add(time.Hour))
+	}
+}
+
+func TestCreate_WithExpiresAtOverridesDefaultTTL(t *testing.T) {
+	explicit := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	fs := newFakeStore()
+	s := newShortener(t, fs, cairn.WithDefaultTTL(time.Hour))
+	link, err := s.Create(context.Background(), "https://example.com/", cairn.WithExpiresAt(explicit))
+	if err != nil {
+		t.Fatalf("Create error = %v", err)
+	}
+	if !link.ExpiresAt.Equal(explicit) {
+		t.Fatalf("ExpiresAt = %v, want %v", link.ExpiresAt, explicit)
+	}
+}
