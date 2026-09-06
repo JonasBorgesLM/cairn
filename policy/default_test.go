@@ -24,6 +24,12 @@ func TestDefault_DeniesAPrivateAddress(t *testing.T) {
 }
 
 // Default must Deny the service's own domain (SR-09).
+//
+// Negative control: this test was run against a build of ownDomains.Evaluate
+// that always returned Allow. It failed -- the request fell through to
+// BlockPrivateNetworks and got denied for the wrong reason
+// (host_resolution_failed) rather than own_domain. Restored immediately
+// after.
 func TestDefault_DeniesTheServicesOwnDomain(t *testing.T) {
 	p := policy.Default([]string{"short.example"})
 	decision, reason := evaluate(t, p, "https://short.example/anything")

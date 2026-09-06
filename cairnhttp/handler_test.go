@@ -45,6 +45,12 @@ func doGet(h http.Handler, path string) *httptest.ResponseRecorder {
 	return rec
 }
 
+// SR-11: never 301.
+//
+// Negative control: this test (and TestPackage_NeverReferencesStatusMovedPermanently
+// below) was run against a build of ServeHTTP using http.StatusMovedPermanently.
+// Both failed -- this one on status 301 vs 302, the other on finding the
+// literal reference. Restored immediately after.
 func TestHandler_RedirectsWithFoundStatus(t *testing.T) {
 	s := newTestShortener(t)
 	link := createLink(t, s, "https://example.com/docs")
@@ -70,6 +76,11 @@ func TestHandler_SetsCacheControlNoStore(t *testing.T) {
 	}
 }
 
+// SR-14: no Referer leak of the short code to the destination.
+//
+// Negative control: this test was run against a build of ServeHTTP with the
+// Referrer-Policy header line removed. It failed -- the header was empty.
+// Restored immediately after.
 func TestHandler_SetsReferrerPolicyNoReferrer(t *testing.T) {
 	s := newTestShortener(t)
 	link := createLink(t, s, "https://example.com/docs")
@@ -131,6 +142,11 @@ func TestPackage_NeverReferencesStatusMovedPermanently(t *testing.T) {
 	}
 }
 
+// SR-13: GET and HEAD only on the redirect route.
+//
+// Negative control: this test was run against a build of ServeHTTP with the
+// method check removed. It failed -- every non-GET/HEAD method still got a
+// 302. Restored immediately after.
 func TestHandler_RejectsNonGetHeadMethods(t *testing.T) {
 	s := newTestShortener(t)
 	link := createLink(t, s, "https://example.com/docs")

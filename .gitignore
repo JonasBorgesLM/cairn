@@ -33,3 +33,7 @@ go.work.sum
 
 # Graphify knowledge graph — generated per machine, rebuilt with `graphify update .`
 graphify-out/
+
+# The demo binary `go build` produces in place (issue #51); the Dockerfile
+# builds its own inside the image and never reads this one.
+/demo/demo

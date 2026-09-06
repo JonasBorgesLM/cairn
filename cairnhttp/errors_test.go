@@ -119,37 +119,57 @@ func TestDefaultErrorEncoder_MapsEachResolveError(t *testing.T) {
 	}
 }
 
-func TestDefaultErrorEncoder_RevokedIs410(t *testing.T) {
-	s := newTestShortener(t)
-	revoked := createLink(t, s, "https://example.com/revoked")
-	if err := s.Revoke(context.Background(), revoked.Code); err != nil {
-		t.Fatalf("Revoke error = %v", err)
-	}
-
-	h := cairnhttp.NewHandler(s)
-	rec := doGet(h, "/"+string(revoked.Code))
-	if rec.Code != http.StatusGone {
-		t.Fatalf("revoked link status = %d, want %d", rec.Code, http.StatusGone)
-	}
-}
-
-func TestDefaultErrorEncoder_ExpiredIs410(t *testing.T) {
+// SR-03: a resolve miss must be indistinguishable, at the transport level, from
+// a resolve of a code that is revoked or expired -- unless the host explicitly
+// opts into distinguishing them via its own ErrorEncoder (docs/INTEGRATION.md
+// §4.2's task-api example does exactly that, conditioned on authentication).
+// DefaultErrorEncoder is what every host gets without opting into anything, so
+// it must not make that distinguishing choice on its own.
+//
+// Negative control: this test was run against a build of DefaultErrorEncoder
+// that mapped ErrLinkExpired/ErrLinkRevoked to 410 (the M6-shipped behavior).
+// It failed -- not-found produced 404 while expired and revoked both produced
+// 410, a status difference a scanner can use to tell "never existed" apart
+// from "existed once" without any authentication at all. Restored (fixed
+// forward) immediately after.
+func TestDefaultErrorEncoder_UniformRejection(t *testing.T) {
 	now := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	current := now
 	s, err := cairn.New(memstore.New(), cairn.WithPolicy(allowPolicy{}), cairn.WithClock(func() time.Time { return current }))
 	if err != nil {
 		t.Fatalf("cairn.New error = %v", err)
 	}
-	link, err := s.Create(context.Background(), "https://example.com/expiring", cairn.WithTTL(time.Hour))
+
+	revoked := createLink(t, s, "https://example.com/revoked")
+	if revokeErr := s.Revoke(context.Background(), revoked.Code); revokeErr != nil {
+		t.Fatalf("Revoke error = %v", revokeErr)
+	}
+
+	expiring, err := s.Create(context.Background(), "https://example.com/expiring", cairn.WithTTL(time.Hour))
 	if err != nil {
 		t.Fatalf("Create error = %v", err)
 	}
 	current = now.Add(2 * time.Hour)
 
 	h := cairnhttp.NewHandler(s)
-	rec := doGet(h, "/"+string(link.Code))
-	if rec.Code != http.StatusGone {
-		t.Fatalf("expired link status = %d, want %d", rec.Code, http.StatusGone)
+
+	responses := map[string]*httptest.ResponseRecorder{
+		"not found": doGet(h, "/abc1234567"),
+		"revoked":   doGet(h, "/"+string(revoked.Code)),
+		"expired":   doGet(h, "/"+string(expiring.Code)),
+	}
+
+	notFound := responses["not found"]
+	for name, rec := range responses {
+		if name == "not found" {
+			continue
+		}
+		if rec.Code != notFound.Code {
+			t.Fatalf("%s status = %d, want %d (same as not-found, SR-03)", name, rec.Code, notFound.Code)
+		}
+		if rec.Body.String() != notFound.Body.String() {
+			t.Fatalf("%s body = %q, want %q (same as not-found, SR-03)", name, rec.Body.String(), notFound.Body.String())
+		}
 	}
 }
 

@@ -57,6 +57,37 @@ func TestResolve_RevokedLinkReturnsErrLinkRevoked(t *testing.T) {
 	}
 }
 
+// SR-23: revocation beats caching, by construction -- there is no read cache
+// in front of the Store, so a Resolve immediately following a Revoke must see
+// it, not a memoized success from the call before.
+//
+// Negative control: this test was run against a build of Resolve that
+// memoized the *Link returned by Store.Load, keyed by code, and served the
+// memoized value on a repeat call instead of loading again. It failed -- the
+// second Resolve returned the link successfully instead of ErrLinkRevoked.
+// The cache was removed immediately after.
+func TestResolve_ReflectsRevocationOnTheVeryNextCall(t *testing.T) {
+	fs := newFakeStore()
+	s := newShortener(t, fs)
+
+	link, err := s.Create(context.Background(), "https://example.com/")
+	if err != nil {
+		t.Fatalf("Create error = %v", err)
+	}
+
+	if _, err := s.Resolve(context.Background(), link.Code); err != nil {
+		t.Fatalf("first Resolve error = %v, want nil", err)
+	}
+
+	if err := s.Revoke(context.Background(), link.Code); err != nil {
+		t.Fatalf("Revoke error = %v", err)
+	}
+
+	if _, err := s.Resolve(context.Background(), link.Code); !errors.Is(err, cairn.ErrLinkRevoked) {
+		t.Fatalf("second Resolve error = %v, want errors.Is(_, ErrLinkRevoked)", err)
+	}
+}
+
 func TestResolve_ExpiredLinkReturnsErrLinkExpired(t *testing.T) {
 	now := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	fs := newFakeStore()

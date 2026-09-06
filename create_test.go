@@ -103,6 +103,13 @@ func TestCreate_FiresOnCreate(t *testing.T) {
 
 // Off by default: SR-17 exists because dedup is an existence oracle, and
 // that only holds if a caller must opt in explicitly.
+//
+// Negative control: this test was run against a build of Create with the
+// s.dedup gate on the lookup step forced to true. It failed -- a nil-pointer
+// panic on s.destIndex, since New only sets destIndex when dedup is enabled;
+// the point holds regardless of failure shape: unconditional dedup breaks
+// exactly the callers this test represents, who never opted in. Restored
+// immediately after.
 func TestCreate_DedupIsOffByDefault(t *testing.T) {
 	fs := newFakeStore()
 	di := fakeDestIndex{fs}
@@ -439,6 +446,12 @@ func TestCreate_RetryTerminatesPromptlyRatherThanLooping(t *testing.T) {
 // SR-20: a non-collision store error must yield no link and must not fire
 // OnCreate -- a hook claiming success for a create that failed would be a
 // lie the host has no way to detect.
+//
+// Negative control: this test was run against a build of createGenerated
+// with the `!errors.Is(err, ErrCodeExists)` early return removed, so any
+// Save error retried like a collision. It failed -- the error surfaced as
+// ErrCodeSpaceExhausted after exhausting retries, not ErrStoreUnavailable.
+// Restored immediately after.
 func TestCreate_StoreErrorYieldsNoLinkAndNoSuccessHook(t *testing.T) {
 	fs := newFakeStore()
 	fs.saveErr = cairn.ErrStoreUnavailable

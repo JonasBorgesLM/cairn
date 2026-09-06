@@ -96,6 +96,12 @@ func TestHandler_AllowedLink_NeverShowsTheInterstitialEvenWhenConfigured(t *test
 // destination is ever accepted from the request -- an extra query parameter
 // naming a URL must be ignored entirely, proven by asserting on the response
 // rather than by review.
+//
+// Negative control: this test (and TestHandler_NeverReflectsAQueryParameterAsADestination
+// below) was run against a build of ServeHTTP that read a "to" query
+// parameter and substituted it for the stored destination when present --
+// the literal open redirect ADR-0014 exists to prevent. It failed: Location
+// became "https://evil.example/". Restored immediately after.
 func TestHandler_ContinueIgnoresAnyDestinationSuppliedInTheRequest(t *testing.T) {
 	s := newInterstitialShortener(t)
 	link := createLink(t, s, "https://unknown.example/real-destination")
