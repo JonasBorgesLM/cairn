@@ -12,6 +12,14 @@ module github.com/JonasBorgesLM/cairn/redisstore
 // independent (NFR-02).
 go 1.25.0
 
-require github.com/JonasBorgesLM/cairn v0.0.0-20260906043424-dd96c8aa595a
+require (
+	github.com/JonasBorgesLM/cairn v0.0.0-20260906043424-dd96c8aa595a
+	github.com/redis/go-redis/v9 v9.22.0
+)
 
-require github.com/JonasBorgesLM/moat v0.2.0 // indirect
+require (
+	github.com/JonasBorgesLM/moat v0.2.0 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	go.uber.org/atomic v1.11.0 // indirect
+	golang.org/x/sys v0.30.0 // indirect
+)
