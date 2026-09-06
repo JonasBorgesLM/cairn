@@ -55,3 +55,24 @@ collector; the field is the authority.
   At any plausible link volume this is not a real cost.
 - `WithExpiryGrace(0)` gives the pure TTL behaviour for a consumer who wants the
   privacy property immediately. It is available, documented, and not the default.
+
+## Amendment (2026-09-06, issue #73)
+
+The first Consequences bullet stated the default backwards. It read
+"`cairnhttp` maps not-found to 404 and expired/revoked to 410 by default — and
+SR-03 lets a host collapse them" — but SR-03 (REQUIREMENTS.md §4.1) requires the
+*collapsed, indistinguishable* response to be the default, and the distinguishing
+410 to be what a host opts into. The M6 implementation of
+`cairnhttp.DefaultErrorEncoder` was built to match this ADR's stated consequence
+rather than SR-03 itself, so it shipped with exactly the inverted default: 404
+for not-found, 410 for expired/revoked, with no opt-in required. Found and fixed
+in the M8 SR- negative-control audit (issue #49).
+
+`DefaultErrorEncoder` now maps `ErrInvalidCode`, `ErrCodeNotFound`,
+`ErrLinkExpired` and `ErrLinkRevoked` all to the same 404 response. `Resolve`
+still distinguishes the three failures internally (this ADR's actual decision,
+which stands unchanged) — a host reaches that distinction only by supplying its
+own `ErrorEncoder`, as `docs/INTEGRATION.md`'s `task-api` example does. The
+original bullet is left as written above, uncorrected in place, per this
+project's ADR-immutability convention (NFR-14); this section is the correction
+of record.

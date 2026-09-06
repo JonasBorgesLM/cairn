@@ -18,21 +18,23 @@ type ErrorEncoder func(w http.ResponseWriter, r *http.Request, err error)
 // DefaultErrorEncoder maps the errors Resolve can return to plain-text HTTP
 // responses, per docs/INTEGRATION.md §4.2's redirect-path subset:
 //
-//   - ErrInvalidCode, ErrCodeNotFound  -> 404
-//   - ErrLinkExpired, ErrLinkRevoked   -> 410
-//   - ErrStoreUnavailable              -> 503, never a redirect (SR-20)
-//   - anything else                    -> 500
+//   - ErrInvalidCode, ErrCodeNotFound, ErrLinkExpired, ErrLinkRevoked -> 404
+//   - ErrStoreUnavailable                                             -> 503, never a redirect (SR-20)
+//   - anything else                                                   -> 500
 //
-// The 410-versus-404 choice for expired links belongs to the host, not to
-// cairn (SR-03): distinguishing expired from not-found helps a legitimate
-// user and is an oracle to a scanner. A host that wants to collapse the two
-// supplies its own ErrorEncoder via WithErrorEncoder.
+// A resolve miss must be indistinguishable, at the transport level, from a
+// resolve of a code that is revoked or expired, unless the host explicitly
+// opts into distinguishing them (SR-03): distinguishing them by default helps
+// a legitimate user, but it is also an oracle a scanner gets for free without
+// any authentication. Collapsing all four to the same 404 here is what makes
+// that distinction something a host must opt into -- by supplying its own
+// ErrorEncoder via WithErrorEncoder, as docs/INTEGRATION.md's task-api example
+// does, conditioned on the request being authenticated.
 func DefaultErrorEncoder(w http.ResponseWriter, _ *http.Request, err error) {
 	switch {
-	case errors.Is(err, cairn.ErrInvalidCode), errors.Is(err, cairn.ErrCodeNotFound):
+	case errors.Is(err, cairn.ErrInvalidCode), errors.Is(err, cairn.ErrCodeNotFound),
+		errors.Is(err, cairn.ErrLinkExpired), errors.Is(err, cairn.ErrLinkRevoked):
 		http.Error(w, "not found", http.StatusNotFound)
-	case errors.Is(err, cairn.ErrLinkExpired), errors.Is(err, cairn.ErrLinkRevoked):
-		http.Error(w, "gone", http.StatusGone)
 	case errors.Is(err, cairn.ErrStoreUnavailable):
 		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 	default:
