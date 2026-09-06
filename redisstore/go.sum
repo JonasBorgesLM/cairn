@@ -1,0 +1,4 @@
+github.com/JonasBorgesLM/cairn v0.0.0-20260906043424-dd96c8aa595a h1:TrThPDdmvN+mbV1ITU5zeiavyWignnaqIq/J2G7JsRM=
+github.com/JonasBorgesLM/cairn v0.0.0-20260906043424-dd96c8aa595a/go.mod h1:R89TyWOa1czW0KhW+SZZzB5HBzCOecnVRPdcM/QTWkM=
+github.com/JonasBorgesLM/moat v0.2.0 h1:4GWDJInGeIgLmdeUxzK2ckUT1WBBhffWyoZP5hSW0v0=
+github.com/JonasBorgesLM/moat v0.2.0/go.mod h1:65xs3itYF+S7xsAZ32o0N7FvZj1564SDquOvmE2nD0o=
