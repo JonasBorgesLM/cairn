@@ -235,7 +235,10 @@ func (s *Store) Revoke(ctx context.Context, c cairn.Code, at time.Time, purgeDes
 }
 
 // ListByOwner implements cairn.OwnerLister, backed by a ZSET scored by
-// CreatedAt (ADR-0010).
+// CreatedAt (ADR-0010). A code whose record has been collected by its native
+// TTL is removed from the index the next time this method encounters it, so
+// the index does not grow past the records it actually points at (issue
+// #45); it is never reported as an error to the caller.
 func (s *Store) ListByOwner(ctx context.Context, ownerID string, after cairn.Cursor, limit int) ([]*cairn.Link, cairn.Cursor, error) {
 	start := 0
 	if after != "" {
@@ -256,7 +259,25 @@ func (s *Store) ListByOwner(ctx context.Context, ownerID string, after cairn.Cur
 		link, err := s.Load(ctx, cairn.Code(code))
 		if err != nil {
 			if errors.Is(err, cairn.ErrCodeNotFound) {
-				continue // a collected record's index entry is stale, not an error.
+				// The record's native TTL collected it (ADR-0009); its
+				// index entry is stale. Removed here, best-effort, so the
+				// index does not grow past the records it actually points
+				// at: a failed ZREM just means it is found and removed
+				// again on some later call, never reported to the caller.
+				//
+				// This can, rarely, shift the index position of entries
+				// after this one by the count removed here, for any other
+				// caller paginating this same owner concurrently with this
+				// cleanup. That caller sees at most one skipped or repeated
+				// entry across the page boundary where it happens -- the
+				// cost of index-position pagination remaining simple
+				// rather than score-cursored, accepted because the
+				// condition it requires (a stale entry discovered exactly
+				// during someone else's concurrent read) is rare and its
+				// consequence is one adjacent entry, not data loss.
+				// #nosec G104 -- best-effort cleanup; a failed ZREM just means this stale entry is found and removed again on some later call, as explained above.
+				s.client.ZRem(ctx, ownerKey(ownerID), code)
+				continue
 			}
 			return nil, "", err
 		}

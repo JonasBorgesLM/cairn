@@ -3,6 +3,7 @@ package memstore_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -83,6 +84,56 @@ func TestOwnerLister_ListsInCreationOrderAndPaginates(t *testing.T) {
 	}
 	if cursor2 != "" {
 		t.Fatalf("cursor2 = %q, want empty (no more results)", cursor2)
+	}
+}
+
+// Pagination is stable across concurrent creation: walking every page after
+// N concurrent Save calls finish must see exactly N codes, none skipped and
+// none duplicated. This holds because the owner index is append-only and
+// ordered by creation, never re-sorted by a mutable value, so a code's page
+// position can never shift once assigned.
+func TestOwnerLister_StableAcrossConcurrentCreation(t *testing.T) {
+	s := memstore.New()
+	dest, err := cairn.ParseDestination("https://example.com/")
+	if err != nil {
+		t.Fatalf("ParseDestination error = %v", err)
+	}
+
+	const n = 200
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			code := cairn.Code(fmt.Sprintf("code%07d", i))
+			if err := s.Save(context.Background(), &cairn.Link{Code: code, Dest: dest, OwnerID: "user-1"}); err != nil {
+				t.Errorf("Save error = %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	seen := make(map[cairn.Code]bool, n)
+	var cursor cairn.Cursor
+	for {
+		page, next, err := s.ListByOwner(context.Background(), "user-1", cursor, 17) // an odd page size to cross boundaries unevenly
+		if err != nil {
+			t.Fatalf("ListByOwner error = %v", err)
+		}
+		for _, link := range page {
+			if seen[link.Code] {
+				t.Fatalf("code %q appeared on more than one page", link.Code)
+			}
+			seen[link.Code] = true
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+
+	if len(seen) != n {
+		t.Fatalf("saw %d distinct codes across all pages, want %d", len(seen), n)
 	}
 }
 
