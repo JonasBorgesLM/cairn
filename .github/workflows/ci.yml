@@ -35,13 +35,24 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # The library floor (NFR-02). Build and test happen here, because this is the
-  # version the module promises its importers.
+  # The core's library floor (NFR-02) -- the version core/go.mod's own `go`
+  # directive promises importers. It is not used to invoke the toolchain in
+  # any job that also touches redisstore: redisstore's floor is its own,
+  # independent number (currently higher, imposed by testcontainers-go, see
+  # redisstore/go.mod), and a workspace combining both, or a build of
+  # redisstore alone, needs a toolchain satisfying the higher of the two.
+  # Go's per-module language gating means using a newer toolchain to build an
+  # older-declared module never weakens what that module's own `go` line
+  # promises -- so those jobs use GO_SUPPORTED_VERSION below instead, and
+  # this stays meaningful only for a job scoped to the core module alone.
   GO_VERSION: "1.24"
-  # The newest supported toolchain. govulncheck runs here: a library verified
-  # only at its floor is scanned against a standard library that no longer
-  # receives fixes, which reports findings no change to this repository can
-  # resolve.
+  # The newest supported toolchain. Used for two different reasons in
+  # different jobs: govulncheck runs here because a library verified only at
+  # its floor is scanned against a standard library that no longer receives
+  # fixes, which reports findings no change to this repository can resolve;
+  # the workspace-creating and redisstore-only jobs (build, satellite-
+  # resolution, docs, integration) run here because they need a toolchain new
+  # enough for redisstore's own floor, per the GO_VERSION comment above.
   GO_SUPPORTED_VERSION: "stable"
   # golangci-lint typechecks against the stdlib of the toolchain it was itself
   # built with, for every module, regardless of that module's `go` directive.
@@ -70,7 +81,12 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
-          go-version: ${{ env.GO_VERSION }}
+          # GO_SUPPORTED_VERSION, not GO_VERSION: this job's workspace step
+          # below needs a toolchain satisfying redisstore's floor too, which
+          # may exceed the core's (see the GO_VERSION comment above). The
+          # per-module `go` directive, not this toolchain choice, is what
+          # actually enforces each module's promised floor.
+          go-version: ${{ env.GO_SUPPORTED_VERSION }}
           cache-dependency-path: |
             go.sum
             redisstore/go.sum
@@ -126,7 +142,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: ${{ env.GO_VERSION }}
+          # GO_SUPPORTED_VERSION: this job builds redisstore alone, and its
+          # floor may exceed the core's (see the GO_VERSION comment above).
+          go-version: ${{ env.GO_SUPPORTED_VERSION }}
           cache-dependency-path: redisstore/go.sum
 
       # No `go work init` anywhere in this job. That omission is the point of
@@ -317,7 +335,10 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: ${{ env.GO_VERSION }}
+          # GO_SUPPORTED_VERSION: this job's workspace step below needs a
+          # toolchain satisfying redisstore's floor too (see the GO_VERSION
+          # comment above).
+          go-version: ${{ env.GO_SUPPORTED_VERSION }}
       - name: Create the development workspace
         run: go work init . ./redisstore
       - name: Run the documentation checks
@@ -445,7 +466,10 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: ${{ env.GO_VERSION }}
+          # GO_SUPPORTED_VERSION: this job's workspace step below needs a
+          # toolchain satisfying redisstore's floor too (see the GO_VERSION
+          # comment above).
+          go-version: ${{ env.GO_SUPPORTED_VERSION }}
           cache-dependency-path: redisstore/go.sum
       - name: Create the development workspace
         run: go work init . ./redisstore
@@ -465,6 +489,44 @@ jobs:
             exit 0
           fi
           go test -tags=integration -race ./...
+
+  # ------------------------------------------------------------- demo ----
+  #
+  # Issue #51 (IR-05): the demo is the thing a reviewer runs without reading
+  # code, and issue #48's threat probes are stated as running against it. A
+  # demo that only works when someone remembers to try it by hand is not the
+  # thing those issues asked for -- this job is that trying, done by CI on
+  # every push.
+  demo:
+    name: demo (docker compose + threat probes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: docker compose up
+        run: docker compose up --build -d
+
+      - name: Wait for the demo to answer
+        run: |
+          for _ in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/doesnotexist1 || true)
+            [ "$code" != "" ] && [ "$code" != "000" ] && exit 0
+            sleep 1
+          done
+          echo "::error::the demo never answered on :8080"
+          docker compose logs
+          exit 1
+
+      - name: docs/security/probe-threats.sh
+        run: docs/security/probe-threats.sh
+
+      - name: docker compose logs (always, for the record)
+        if: always()
+        run: docker compose logs
+
+      - name: docker compose down
+        if: always()
+        run: docker compose down -v
 
   # -------------------------------------------------- dependency review ----
   dependency-review:
@@ -505,6 +567,7 @@ jobs:
       - adr-immutability
       - commits
       - integration
+      - demo
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any dependency failed

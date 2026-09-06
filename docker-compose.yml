@@ -1,0 +1,40 @@
+services:
+  redis:
+    image: redis:7.4-alpine
+    # ADR-0008's operational contract: AOF everysec (RDB-only loses every link
+    # since the last save) and noeviction (any allkeys-* policy silently
+    # deletes links under memory pressure -- redisstore.EvictionCheck refuses
+    # to start the demo against anything else). What this does NOT cover: a
+    # replica and an exercised restore procedure, which ADR-0008 also
+    # requires in production and a one-container demo cannot demonstrate.
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory-policy noeviction
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  demo:
+    build: ./demo
+    ports:
+      - "8080:8080"
+    environment:
+      REDIS_ADDR: redis:6379
+      # A code shortened to point back at this same host must be rejected
+      # (SR-09, T-04's anti-loop mitigation) -- OWN_DOMAIN is how the demo
+      # tells policy.Default which host that is.
+      OWN_DOMAIN: localhost:8080
+      BASE_URL: http://localhost:8080
+      PORT_ADDR: ":8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  redis-data:

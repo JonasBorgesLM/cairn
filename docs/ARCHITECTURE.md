@@ -444,9 +444,9 @@ GET /{code}
  │
  ├─ method not GET/HEAD → 405                                 SR-13
  ├─ Shortener.Resolve
- │    ErrInvalidCode | ErrCodeNotFound            → 404 via ErrorEncoder
- │    ErrLinkRevoked | ErrLinkExpired             → 410 via ErrorEncoder (default;
- │                                                   a host may collapse to 404 — SR-03)
+ │    ErrInvalidCode | ErrCodeNotFound            → 404 via ErrorEncoder (default)
+ │    ErrLinkRevoked | ErrLinkExpired             → 404 via ErrorEncoder (default;
+ │                                                   a host may opt into 410 — SR-03)
  │    ErrStoreUnavailable                         → 503, never a redirect  SR-20
  ├─ Interstitial link and interstitial configured → render warning page
  │    continuation control references the CODE only, never a URL       SR-24

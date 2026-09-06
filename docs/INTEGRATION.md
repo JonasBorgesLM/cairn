@@ -159,6 +159,9 @@ does **not** check ownership. The Service must load the link, compare
 passes every test written by the person who wrote the code. It gets a dedicated
 negative test in `task-api`: user A cannot revoke user B's link.
 
+See [`docs/integrations/task-api.md`](integrations/task-api.md) for the exact
+pattern and the real, running test that proves it.
+
 ### 4.2 Error envelope mapping (FR-12)
 
 `task-api` has a standardized JSON error envelope. `cairnhttp.ErrorEncoder` is
@@ -166,10 +169,10 @@ the seam:
 
 | cairn error | HTTP | Envelope code | Note |
 | --- | --- | --- | --- |
-| `ErrInvalidCode` | 404 | `link_not_found` | Collapsed with not-found on purpose (SR-03) |
+| `ErrInvalidCode` | 404 | `link_not_found` | |
 | `ErrCodeNotFound` | 404 | `link_not_found` | |
-| `ErrLinkExpired` | 410 | `link_expired` | Or collapse to 404 — see below |
-| `ErrLinkRevoked` | 410 | `link_revoked` | |
+| `ErrLinkExpired` | 410 for an authenticated request, else 404 | `link_expired` / `link_not_found` | `task-api`'s own opt-in (SR-03) — see below |
+| `ErrLinkRevoked` | 410 for an authenticated request, else 404 | `link_revoked` / `link_not_found` | `task-api`'s own opt-in (SR-03) — see below |
 | `ErrDestinationRejected` | 422 | `destination_rejected` + `reason` | `RejectReason` is a stable enum, safe to expose |
 | `ErrCodeExists` | 409 | `code_taken` | Vanity only |
 | `ErrVanityReserved` | 422 | `code_reserved` | |
@@ -177,12 +180,14 @@ the seam:
 | `ErrCodeSpaceExhausted` | 503 | `temporarily_unavailable` | Alert-worthy: the keyspace is saturating |
 | `ErrStoreUnavailable` | 503 | `temporarily_unavailable` | Never a redirect (SR-20) |
 
-**The 410-versus-404 decision belongs to `task-api`, not to cairn.** Distinguishing
-expired from not-found is useful to a legitimate user and is an oracle to a
-scanner (SR-03). `task-api`'s answer: **410 for authenticated requests, 404 for
-anonymous ones.** The owner of a link learns why it failed; a scanner learns
-nothing. That is the whole reason `ErrorEncoder` is a function rather than a
-table.
+**The 410-versus-404 decision belongs to `task-api`, not to cairn.**
+`cairnhttp.DefaultErrorEncoder` maps not-found, expired and revoked all to the
+same 404 by default (SR-03): distinguishing them is useful to a legitimate user
+and is an oracle to a scanner, so a host must opt into it rather than get it for
+free. `task-api`'s own `ErrorEncoder`, shown above, makes that opt-in choice:
+**410 for authenticated requests, 404 for anonymous ones.** The owner of a link
+learns why it failed; a scanner learns nothing. That is the whole reason
+`ErrorEncoder` is a function rather than a table.
 
 ### 4.3 Deployment
 
