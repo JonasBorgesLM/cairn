@@ -46,6 +46,10 @@ func TestParseDestination_AcceptsValidHTTPSURL(t *testing.T) {
 }
 
 // SR-08: length checked before parsing, default max 2000 bytes.
+//
+// Negative control: this test was run against a build of ParseDestination
+// with the length check removed. It failed -- error was nil. Restored
+// immediately after.
 func TestParseDestination_RejectsTooLong(t *testing.T) {
 	long := "https://example.com/" + strings.Repeat("a", 2000)
 	_, err := cairn.ParseDestination(long)
@@ -129,6 +133,11 @@ func TestParseDestination_RejectsDoubleAtUserinfo(t *testing.T) {
 }
 
 // SR-10: no control characters or whitespace anywhere in the destination.
+//
+// Negative control: this test was run against a build of ParseDestination
+// with the raw-level containsControlOrWhitespace check removed. It failed --
+// RejectReasonFrom reported (\"\", false) instead of ReasonControlChars.
+// Restored immediately after.
 func TestParseDestination_RejectsCRLFInjection(t *testing.T) {
 	_, err := cairn.ParseDestination("https://example.com/\r\nSet-Cookie:%20evil=1")
 	if err == nil {

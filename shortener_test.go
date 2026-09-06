@@ -28,7 +28,11 @@ func TestNew_RejectsNoPolicy(t *testing.T) {
 }
 
 // ADR-0002: WithCodeLength(5) against a million expected links must fail --
-// this is the literal scenario from issue #19/#27.
+// this is the literal scenario from issue #19/#27 (SR-02).
+//
+// Negative control: this test was run against a build of New with the
+// CheckKeyspaceDensity call removed from the default-generator branch. It
+// failed -- error was nil. Restored immediately after.
 func TestNew_RejectsUnsafeKeyspaceDensity(t *testing.T) {
 	_, err := cairn.New(newFakeStore(),
 		cairn.WithPolicy(allowPolicy{}),
@@ -80,6 +84,10 @@ func TestNew_AllowsDedupAgainstADestIndexStore(t *testing.T) {
 
 // SR-04: a vanity range that overlaps the generated code length must fail at
 // New, not surface as a confusing collision later.
+//
+// Negative control: this test was run against a build of New with the
+// overlap check removed from the vanity-validation branch. It failed --
+// error was nil. Restored immediately after.
 func TestNew_RejectsVanityRangeOverlappingGeneratedLength(t *testing.T) {
 	_, err := cairn.New(newFakeStore(),
 		cairn.WithPolicy(allowPolicy{}),

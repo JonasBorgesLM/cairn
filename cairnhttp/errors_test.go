@@ -141,8 +141,8 @@ func TestDefaultErrorEncoder_UniformRejection(t *testing.T) {
 	}
 
 	revoked := createLink(t, s, "https://example.com/revoked")
-	if err := s.Revoke(context.Background(), revoked.Code); err != nil {
-		t.Fatalf("Revoke error = %v", err)
+	if revokeErr := s.Revoke(context.Background(), revoked.Code); revokeErr != nil {
+		t.Fatalf("Revoke error = %v", revokeErr)
 	}
 
 	expiring, err := s.Create(context.Background(), "https://example.com/expiring", cairn.WithTTL(time.Hour))

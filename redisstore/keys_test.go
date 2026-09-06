@@ -7,6 +7,12 @@ import (
 	"github.com/JonasBorgesLM/cairn"
 )
 
+// SR-22: every key carries the fixed namespace and schema version.
+//
+// Negative control: this and the two tests below were run against a build
+// with keySchema emptied. All three failed -- e.g. linkKey produced
+// ":link:abc1234567" instead of "cairn:v1:link:abc1234567". Restored
+// immediately after.
 func TestLinkKey_IsNamespacedAndVersioned(t *testing.T) {
 	got := linkKey("abc1234567")
 	want := "cairn:v1:link:abc1234567"
