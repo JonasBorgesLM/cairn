@@ -13,7 +13,7 @@ module github.com/JonasBorgesLM/cairn/redisstore
 go 1.25.0
 
 require (
-	github.com/JonasBorgesLM/cairn v0.0.0-20260906043424-dd96c8aa595a
+	github.com/JonasBorgesLM/cairn v0.1.1
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/testcontainers/testcontainers-go/modules/redis v0.44.0
 )
