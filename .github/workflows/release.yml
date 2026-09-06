@@ -69,6 +69,13 @@ jobs:
             dir=$(dirname "${f#./}")
             case "$dir" in
               .|redisstore) ;;
+              # demo/ is a docker-compose reviewer tool (issue #51), never
+              # published: it is deliberately excluded here, not merely
+              # forgotten, the same distinction DefaultVanityReserved makes
+              # explicit elsewhere in this project between "considered and
+              # excluded" and "never asked for". A module intended to release
+              # later still belongs in the case above, not here.
+              demo) ;;
               *) echo "::error::module at '$dir' matches no tag pattern in this workflow"; exit 1 ;;
             esac
           done
